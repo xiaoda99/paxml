@@ -5,7 +5,7 @@ absl-py
 clu
 etils
 flax
-jax @ git+https://github.com/google/jax
+# jax @ git+https://github.com/google/jax  # XD
 lingvo
 numpy
 orbax-checkpoint
