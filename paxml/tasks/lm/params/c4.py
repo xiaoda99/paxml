@@ -62,6 +62,24 @@ C4_GPT_EVAL_FEATURES_LM = {
 C4_TRAIN_DATADIR = 'gs://mlperf-llm-public2'
 C4_EVAL_DATADIR = 'gs://mlperf-llm-public2'
 
+# XD
+import tensorflow as tf
+RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
+feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
+RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
+
+@seqio.map_over_dataset
+def convert_datatype(ex):
+  return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
+
+seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
+    seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
+    preprocessors=[
+        convert_datatype,
+        functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
+    ],
+    output_features=RT_GPT_FEATURES_LM,
+)
 
 class TaskRegistry(t5.data.TaskRegistry):
   """Task registry with extra tracking."""
@@ -202,10 +220,11 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     p = pax_fiddle.Config(
         seqio_input.SeqIOInput,
         name='C4Train' if is_training else 'C4Validation',
-        mixture_name='c4_lm_v301_gpt'
-        if is_training
-        else 'c4_lm_v301_gpt_eval_tokenized',
-        split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        # mixture_name='c4_lm_v301_gpt'
+        # if is_training
+        # else 'c4_lm_v301_gpt_eval_tokenized',
+        # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
         task_feature_lengths={'targets': self.MAX_SEQ_LEN},
         use_cached=False,
         repeat=True if is_training else False,
@@ -332,6 +351,7 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
   Only things different from TransformerLmSpmdAdafactor are listed.
   """
   # architecture related
+  VOCAB_SIZE = 50320  # XD: GPT2Tokenizer.vocab_size = 50257
   NUM_LAYERS = 32
   NUM_HEADS = 16
   MODEL_DIMS = 1024
