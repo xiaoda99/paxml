@@ -59,27 +59,27 @@ C4_GPT_EVAL_FEATURES_LM = {
         vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
     )
 }
-C4_TRAIN_DATADIR = 'gs://mlperf-llm-public2'
-C4_EVAL_DATADIR = 'gs://mlperf-llm-public2'
+C4_TRAIN_DATADIR = 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
+C4_EVAL_DATADIR = 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
 
 # XD
-import tensorflow as tf
-RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
-feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
-RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
+# import tensorflow as tf
+# RT_DATAPATH = 'gs://llm_projects/data/rotten_tomatoes_train_8530.tfrecords'
+# feature_desc = {"input_ids": tf.io.VarLenFeature(tf.int64)}
+# RT_GPT_FEATURES_LM = {'targets': seqio.Feature(vocabulary=PASS_THROUGH_VOCABULARY, dtype=tf.int32, rank=1)}
 
-@seqio.map_over_dataset
-def convert_datatype(ex):
-  return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
+# @seqio.map_over_dataset
+# def convert_datatype(ex):
+#   return {k: tf.cast(tf.sparse.to_dense(v, default_value=0), dtype=tf.int32) for k, v in ex.items()}
 
-seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
-    seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
-    preprocessors=[
-        convert_datatype,
-        functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
-    ],
-    output_features=RT_GPT_FEATURES_LM,
-)
+# seqio.TaskRegistry.add('rotten_tomatoes_lm_gpt', 
+#     seqio.TFExampleDataSource(split_to_filepattern={'train': RT_DATAPATH}, feature_description=feature_desc),
+#     preprocessors=[
+#         convert_datatype,
+#         functools.partial(t5_preprocessors.rekey, key_map={'targets': 'input_ids'}),
+#     ],
+#     output_features=RT_GPT_FEATURES_LM,
+# )
 
 class TaskRegistry(t5.data.TaskRegistry):
   """Task registry with extra tracking."""
@@ -124,8 +124,8 @@ class TaskRegistry(t5.data.TaskRegistry):
 # C4 corpus for language model pretraining
 TaskRegistry.add_versioned_tfds_task(
     'c4_lm_v301_gpt',
-    versions=['3.0.4'],
-    pinned_version='3.0.4',
+    versions=['3.0.1'],  # XD: 3.0.4 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.4 -> 3.0.1
     tfds_name='c4/en',
     tfds_data_dir=C4_TRAIN_DATADIR,
     preprocessors=[
@@ -150,8 +150,8 @@ TaskRegistry.add_versioned_tfds_task(
 
 TaskRegistry.add_versioned_tfds_task(
     'c4_lm_v301_gpt_eval_tokenized',
-    versions=['3.0.5'],
-    pinned_version='3.0.5',
+    versions=['3.0.1'],  # XD: 3.0.5 -> 3.0.1
+    pinned_version='3.0.1',  # XD: 3.0.5 -> 3.0.1
     tfds_name='c4/en',
     tfds_data_dir=C4_EVAL_DATADIR,
     preprocessors=[
@@ -209,6 +209,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             percore_batch_size * num_local_devices + 1e-6
         )
         num_infeed_hosts = 1
+    # batch_size_per_process, num_infeed_hosts = 4, 2  # XD
     seed = None
     if is_training:
       seed = self.TRAINING_SEED
@@ -220,11 +221,11 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     p = pax_fiddle.Config(
         seqio_input.SeqIOInput,
         name='C4Train' if is_training else 'C4Validation',
-        # mixture_name='c4_lm_v301_gpt'
-        # if is_training
-        # else 'c4_lm_v301_gpt_eval_tokenized',
-        # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
-        mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
+        mixture_name='c4_lm_v301_gpt'
+        if is_training
+        else 'c4_lm_v301_gpt_eval_tokenized',
+        split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        # mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
         task_feature_lengths={'targets': self.MAX_SEQ_LEN},
         use_cached=False,
         repeat=True if is_training else False,
@@ -351,7 +352,6 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
   Only things different from TransformerLmSpmdAdafactor are listed.
   """
   # architecture related
-  VOCAB_SIZE = 50320  # XD: GPT2Tokenizer.vocab_size = 50257
   NUM_LAYERS = 32
   NUM_HEADS = 16
   MODEL_DIMS = 1024
@@ -579,6 +579,7 @@ def configure_gpt3_task(
 class C4SpmdAdam(TransformerLmSpmdAdam,
                  C4UnsupervisedDataset):
   r"""Base config for a decoder only transformer."""
+  # VOCAB_SIZE = 50320  # XD: GPT2Tokenizer.vocab_size = 50257
   NUM_LAYERS = 24
   NUM_HEADS = 32
   MODEL_DIMS = 2048
@@ -930,7 +931,7 @@ class C4Spmd1BAdam4Replicas(C4SpmdAdam):
   DIMS_PER_HEAD = 128
   PERCORE_BATCH_SIZE = 32
   MAX_SEQ_LEN = 1024
-  VOCAB_SIZE = 32000
+  # VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
   USE_REPEATED_LAYER = True
 
@@ -961,7 +962,7 @@ class C4Spmd2BAdam4Replicas(C4SpmdAdam):
   DIMS_PER_HEAD = 128
   PERCORE_BATCH_SIZE = 32
   MAX_SEQ_LEN = 1024
-  VOCAB_SIZE = 32000
+  VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
   USE_REPEATED_LAYER = True
 
@@ -969,6 +970,26 @@ class C4Spmd2BAdam4Replicas(C4SpmdAdam):
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
   ICI_MESH_SHAPE = [1, 4, 1]
 
+@experiment_registry.register
+class C4Spmd2BAdam32Replicas(C4SpmdAdam):
+  r"""GPT-3 config with 2B params.
+
+  Model Parameters: Global batch size = 1 * 8 * 4 * 32 = 128.
+  """
+  NUM_LAYERS = 18
+  MODEL_DIMS = 3072
+  HIDDEN_DIMS = MODEL_DIMS * 4
+  NUM_HEADS = 24
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 32
+  MAX_SEQ_LEN = 1024 * 2  # XD
+  VOCAB_SIZE = 32000  # XD
+  FPROP_DTYPE = jnp.bfloat16
+  USE_REPEATED_LAYER = True
+
+  SUMMARY_INTERVAL_STEPS = 10
+  CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
+  ICI_MESH_SHAPE = [1, 8, 4]
 
 @experiment_registry.register
 class C4Spmd16BAdam32Replicas(C4SpmdAdam):
@@ -981,9 +1002,9 @@ class C4Spmd16BAdam32Replicas(C4SpmdAdam):
   HIDDEN_DIMS = MODEL_DIMS * 4
   NUM_HEADS = 48
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 16
+  PERCORE_BATCH_SIZE = 16 #// 8 # XD: v4->v3
   MAX_SEQ_LEN = 1024
-  VOCAB_SIZE = 32000
+  VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
   USE_REPEATED_LAYER = True
 
@@ -1005,7 +1026,7 @@ class C4Spmd32BAdam64Replicas(C4SpmdAdam):
   DIMS_PER_HEAD = 128
   PERCORE_BATCH_SIZE = 8
   MAX_SEQ_LEN = 1024
-  VOCAB_SIZE = 32000
+  VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
   USE_REPEATED_LAYER = True
 
