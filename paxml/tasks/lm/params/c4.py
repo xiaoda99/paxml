@@ -45,7 +45,8 @@ from t5.data import preprocessors as t5_preprocessors
 WeightInit = base_layer.WeightInit
 
 GPT_SPM_PATH = (
-    'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
+    'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
+    # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
 )
 GPT_EOS_ID = 1
 GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
@@ -202,7 +203,10 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
     else:
       if jax.process_count() > 1:
         assert global_batch_size % num_local_devices == 0
-        batch_size_per_process = num_local_devices
+        # batch_size_per_process = num_local_devices  # XD: bug?
+        batch_size_per_process = int(
+            percore_batch_size * num_local_devices + 1e-6
+        )
         num_infeed_hosts = global_batch_size // batch_size_per_process
       else:
         batch_size_per_process = int(
@@ -224,7 +228,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         mixture_name='c4_lm_v301_gpt'
         if is_training
         else 'c4_lm_v301_gpt_eval_tokenized',
-        split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        split_name='train' if is_training else 'validation',  # XD for 3.0.1
         # mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
         task_feature_lengths={'targets': self.MAX_SEQ_LEN},
         use_cached=False,
@@ -971,17 +976,16 @@ class C4Spmd2BAdam4Replicas(C4SpmdAdam):
   ICI_MESH_SHAPE = [1, 4, 1]
 
 @experiment_registry.register
-class C4Spmd2BAdam32Replicas(C4SpmdAdam):
-  r"""GPT-3 config with 2B params.
-
-  Model Parameters: Global batch size = 1 * 8 * 4 * 32 = 128.
+class C4Spmd2BAdam32Replicas(C4SpmdAdam):  # XD
+  r"""
+  Model Parameters: Global batch size = 1 * 8 * 4 * 8 = 256.
   """
   NUM_LAYERS = 18
   MODEL_DIMS = 3072
   HIDDEN_DIMS = MODEL_DIMS * 4
   NUM_HEADS = 24
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 32
+  PERCORE_BATCH_SIZE = 8
   MAX_SEQ_LEN = 1024 * 2  # XD
   VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
@@ -990,6 +994,46 @@ class C4Spmd2BAdam32Replicas(C4SpmdAdam):
   SUMMARY_INTERVAL_STEPS = 10
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
   ICI_MESH_SHAPE = [1, 8, 4]
+  
+@experiment_registry.register
+class C4Spmd2BAdam32x2Replicas(C4SpmdAdam):  # XD
+  r"""
+  Model Parameters: Global batch size = 1 * 16 * 2 * 16 = 512.
+  """
+  NUM_LAYERS = 18
+  MODEL_DIMS = 3072
+  HIDDEN_DIMS = MODEL_DIMS * 4
+  NUM_HEADS = 24
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 16
+  MAX_SEQ_LEN = 1024 * 2  # XD
+  VOCAB_SIZE = 32000  # XD
+  FPROP_DTYPE = jnp.bfloat16
+  USE_REPEATED_LAYER = True
+
+  SUMMARY_INTERVAL_STEPS = 10
+  CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
+  ICI_MESH_SHAPE = [1, 16, 2]
+
+@experiment_registry.register
+class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
+  r"""
+  Model Parameters: Global batch size = 4 * 1 * 8 * 1 / 8 = 4.
+  """
+  NUM_LAYERS = 32
+  MODEL_DIMS = 4096
+  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 1/8
+  MAX_SEQ_LEN = 1024 * 2  # XD
+  VOCAB_SIZE = 32000  # XD
+  FPROP_DTYPE = jnp.bfloat16
+  USE_REPEATED_LAYER = True
+
+  SUMMARY_INTERVAL_STEPS = 10
+  CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
+  ICI_MESH_SHAPE = [4, 1, 8]
 
 @experiment_registry.register
 class C4Spmd16BAdam32Replicas(C4SpmdAdam):

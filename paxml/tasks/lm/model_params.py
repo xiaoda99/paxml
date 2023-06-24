@@ -523,16 +523,16 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   PACKED_INPUT = True
 
   USE_REPEATED_LAYER = False
-  SEPARATE_EMBEDDING = False
+  SEPARATE_EMBEDDING = True # XD: False
   TRAINABLE_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 16 * 1024
   RELATIVE_BIAS = False
-  USE_ROTARY_POSITION_EMB = False
+  USE_ROTARY_POSITION_EMB = True  # XD: False
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
-  COMBINE_QKV = True
-  ACTIVATION_CLS = activations.ReLU
-  USE_GATED_ACTIVATION = False
+  COMBINE_QKV = False  # XD: True
+  ACTIVATION_CLS = activations.SiLU  # XD: ReLU
+  USE_GATED_ACTIVATION = True  # XD: False
   DECAY_END = 100000
 
   # optimizer related
@@ -602,6 +602,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
           layers.TrainablePositionalEmbedding,
           max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
       )
+    else:
+      model_p.lm_tpl.position_emb_tpl = None  # XD
 
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
     stacked_transformer_tpl.model_dims = self.MODEL_DIMS
