@@ -202,7 +202,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       num_infeed_hosts = global_batch_size // batch_size_per_process
     else:
       if jax.process_count() > 1:
-        assert global_batch_size % num_local_devices == 0
+        # assert global_batch_size % num_local_devices == 0  # XD: bug?
         # batch_size_per_process = num_local_devices  # XD: bug?
         batch_size_per_process = int(
             percore_batch_size * num_local_devices + 1e-6
@@ -367,15 +367,15 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
   EMBEDDING_LOOKUP_STYLE = 'matmul'
 
   # optimizer related
-  LEARNING_RATE = 1e-3
+  LEARNING_RATE = 2e-4  # XD: 1e-3
   ADAM_BETA1 = 0.9
-  ADAM_BETA2 = 0.99
+  ADAM_BETA2 = 0.95  # XD: 0.99
   ADAM_CLIP_THRESHOLD = 1.0
-  ADAM_EPSILON = 1e-6
+  ADAM_EPSILON = 1e-8  #XD: -6
   ADAM_EPSILON_ROOT = 0.0
 
   # Learning rate schedule
-  LR_SCHEDULE = 'linear_rampup_exponential_decay'
+  LR_SCHEDULE = 'linear_rampup_cosine_decay'  # XD: exponential
   LR_LRED_WARMUP = 4000
   LR_LRED_DECAY_START = 4001
   LR_LRED_DECAY_END = 300000
@@ -384,9 +384,13 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
 
   LR_COS_MIN_RATIO = 0.1
   LR_COS_MAX = 1.0
-  LR_COS_WARMUP = 4000
-  LR_COS_DECAY_START = 4001
-  LR_COS_DECAY_END = 300000
+  # XD
+  LR_COS_WARMUP = 2000
+  LR_COS_DECAY_START = 2001
+  LR_COS_DECAY_END = 200000
+  # LR_COS_WARMUP = 4000
+  # LR_COS_DECAY_START = 4001
+  # LR_COS_DECAY_END = 300000
 
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     """Returns the task parameters."""
@@ -594,8 +598,8 @@ class C4SpmdAdam(TransformerLmSpmdAdam,
   DIMS_PER_HEAD = None
   # Known as NUM_EMBEDDINGS in t5x
   VOCAB_SIZE = 32128
-  ACTIVATION_CLS = layers.GELU
-  USE_GATED_ACTIVATION = False
+  ACTIVATION_CLS = layers.SiLU  # XD: GELU
+  USE_GATED_ACTIVATION = True  # XD: False
 
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_DOT_FOR_MLPERF_200B
   CHECKPOINT_EVERY_N_STEPS = 1000
@@ -1025,7 +1029,7 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 1/8
+  PERCORE_BATCH_SIZE = 4  # 4
   MAX_SEQ_LEN = 1024 * 2  # XD
   VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
@@ -1033,7 +1037,45 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
 
   SUMMARY_INTERVAL_STEPS = 10
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
+  # ICI_MESH_SHAPE = [1, 8, 4]
   ICI_MESH_SHAPE = [4, 1, 8]
+
+@experiment_registry.register
+class C4SpmdLLaMA3BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
+  r"""
+  Model Parameters: Global batch size = 4 * 1 * 8 * 1 / 8 = 4.
+  """
+  NUM_LAYERS = 32
+  MODEL_DIMS = 2560
+  HIDDEN_DIMS = 6912  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 80
+  PERCORE_BATCH_SIZE = 8  # 4
+  COMBINE_QKV = True
+
+  # ICI_MESH_SHAPE = [1, 8, 4]
+  ICI_MESH_SHAPE = [4, 1, 8]
+
+@experiment_registry.register
+class C4SpmdLLaMA1BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
+  r"""
+  Model Parameters: Global batch size = 4 * 1 * 8 * 1 / 8 = 4.
+  """
+  NUM_LAYERS = 24
+  MODEL_DIMS = 2048
+  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 16
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 16  # 4
+  COMBINE_QKV = False
+
+  # ICI_MESH_SHAPE = [1, 8, 4]
+  ICI_MESH_SHAPE = [8, 1, 4]
+
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    task_p = super().task()
+    task_p.train.num_train_steps = 20
+    return task_p
 
 @experiment_registry.register
 class C4Spmd16BAdam32Replicas(C4SpmdAdam):

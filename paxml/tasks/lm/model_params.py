@@ -32,6 +32,7 @@ from praxis import pax_fiddle
 from praxis import py_utils
 from praxis import schedules
 from praxis.layers import activations
+from praxis.layers import normalizations  # XD
 from praxis.layers import embedding_softmax
 from praxis.layers import models
 from praxis.layers import transformer_models
@@ -527,19 +528,20 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   TRAINABLE_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 16 * 1024
   RELATIVE_BIAS = False
-  USE_ROTARY_POSITION_EMB = True  # XD: False
+  USE_ROTARY_POSITION_EMB = False  # XD: False
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
   COMBINE_QKV = False  # XD: True
-  ACTIVATION_CLS = activations.SiLU  # XD: ReLU
-  USE_GATED_ACTIVATION = True  # XD: False
+  NORMALIZATION_CLS = normalizations.RmsNorm  # XD add
+  ACTIVATION_CLS = activations.ReLU
+  USE_GATED_ACTIVATION = False
   DECAY_END = 100000
 
   # optimizer related
   DROPOUT_PROB = 0.0
   LEARNING_RATE = 2.5e-4
   CLIP_GRADIENT_NORM_TO_VALUE = 5.0
-  WEIGHT_DECAY = 1e-3
+  WEIGHT_DECAY = 1e-2  # XD: -3
   SOFTMAX_CAP_LOGITS = 30.0
   ATTEN_LOGIT_CAP = 50.0
   # Autodiff remat.
@@ -602,8 +604,9 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
           layers.TrainablePositionalEmbedding,
           max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
       )
-    else:
+    elif self.USE_ROTARY_POSITION_EMB:
       model_p.lm_tpl.position_emb_tpl = None  # XD
+    model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
 
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
     stacked_transformer_tpl.model_dims = self.MODEL_DIMS
@@ -619,13 +622,16 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     )
     transformer_layer_p.tr_atten_tpl.atten_logit_cap = self.ATTEN_LOGIT_CAP
     transformer_layer_p.norm_policy = self.NORM_POLICY
+    transformer_layer_p.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
     transformer_layer_p.tr_atten_tpl.use_bias = False
     transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
+    transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD
     transformer_layer_p.tr_fflayer_tpl.activation_tpl = pax_fiddle.Config(
         self.ACTIVATION_CLS
     )
     transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
         self.USE_GATED_ACTIVATION)
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
     transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
     # pytype: enable=attribute-error  # enable-nested-classes
 

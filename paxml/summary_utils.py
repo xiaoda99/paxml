@@ -410,10 +410,10 @@ def write_summary_entry(summary_writer: SummaryWriter,
   # Scalar values must be plain Python types rather than e.g. np.int / np.float.
   # SPMD training will produce a Jax Array.
   loss = py_utils.maybe_unreplicate_for_fully_replicated(loss)
-  weighted_scalars_list = py_utils.maybe_unreplicate_for_fully_replicated(
-      weighted_scalars_list)
-  summary_tensors = py_utils.maybe_unreplicate_for_fully_replicated(
-      summary_tensors)
+  weighted_scalars_list = {} # XD remove: py_utils.maybe_unreplicate_for_fully_replicated(
+      # weighted_scalars_list)
+  summary_tensors = {} # XD remove: py_utils.maybe_unreplicate_for_fully_replicated(
+      # summary_tensors)
 
   mean_loss = np.mean(loss).item()
   with summary_writer.as_default():
@@ -664,7 +664,7 @@ class SummaryHandler:
                should_log: bool = False) -> bool:
     """Adds summaries for a given step."""
 
-    if should_log:
+    if False and should_log:  # XD
       logging.info(
           '[PAX STATUS] step_i: %d, %s loss: %s', step, self._name, loss
       )
