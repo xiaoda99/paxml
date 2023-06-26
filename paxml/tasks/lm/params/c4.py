@@ -371,7 +371,7 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
   ADAM_BETA1 = 0.9
   ADAM_BETA2 = 0.95  # XD: 0.99
   ADAM_CLIP_THRESHOLD = 1.0
-  ADAM_EPSILON = 1e-8  #XD: -6
+  ADAM_EPSILON = 1e-8  # XD: -6
   ADAM_EPSILON_ROOT = 0.0
 
   # Learning rate schedule
@@ -598,8 +598,8 @@ class C4SpmdAdam(TransformerLmSpmdAdam,
   DIMS_PER_HEAD = None
   # Known as NUM_EMBEDDINGS in t5x
   VOCAB_SIZE = 32128
-  ACTIVATION_CLS = layers.SiLU  # XD: GELU
-  USE_GATED_ACTIVATION = True  # XD: False
+  ACTIVATION_CLS = layers.GELU  # XD: GELU, SiLU
+  USE_GATED_ACTIVATION = False  # XD: False
 
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_DOT_FOR_MLPERF_200B
   CHECKPOINT_EVERY_N_STEPS = 1000
@@ -1029,7 +1029,7 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 4  # 4
+  PERCORE_BATCH_SIZE = 2  # 4
   MAX_SEQ_LEN = 1024 * 2  # XD
   VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
@@ -1040,21 +1040,10 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
   # ICI_MESH_SHAPE = [1, 8, 4]
   ICI_MESH_SHAPE = [4, 1, 8]
 
-@experiment_registry.register
-class C4SpmdLLaMA3BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
-  r"""
-  Model Parameters: Global batch size = 4 * 1 * 8 * 1 / 8 = 4.
-  """
-  NUM_LAYERS = 32
-  MODEL_DIMS = 2560
-  HIDDEN_DIMS = 6912  # XD: MODEL_DIMS * 4 * 2 // 3
-  NUM_HEADS = 32
-  DIMS_PER_HEAD = 80
-  PERCORE_BATCH_SIZE = 8  # 4
-  COMBINE_QKV = True
-
-  # ICI_MESH_SHAPE = [1, 8, 4]
-  ICI_MESH_SHAPE = [4, 1, 8]
+  # def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+  #   task_p = super().task()
+  #   task_p.train.num_train_steps = 30
+  #   return task_p
 
 @experiment_registry.register
 class C4SpmdLLaMA1BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
@@ -1066,16 +1055,11 @@ class C4SpmdLLaMA1BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
   HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 16  # 4
+  PERCORE_BATCH_SIZE = 8  # 4
   COMBINE_QKV = False
 
   # ICI_MESH_SHAPE = [1, 8, 4]
-  ICI_MESH_SHAPE = [8, 1, 4]
-
-  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
-    task_p = super().task()
-    task_p.train.num_train_steps = 20
-    return task_p
+  ICI_MESH_SHAPE = [16, 1, 2]
 
 @experiment_registry.register
 class C4Spmd16BAdam32Replicas(C4SpmdAdam):
