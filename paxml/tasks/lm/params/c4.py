@@ -598,8 +598,8 @@ class C4SpmdAdam(TransformerLmSpmdAdam,
   DIMS_PER_HEAD = None
   # Known as NUM_EMBEDDINGS in t5x
   VOCAB_SIZE = 32128
-  ACTIVATION_CLS = layers.GELU  # XD: GELU, SiLU
-  USE_GATED_ACTIVATION = False  # XD: False
+  ACTIVATION_CLS = layers.SiLU  # XD: GELU, SiLU
+  USE_GATED_ACTIVATION = True  # XD: False
 
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_DOT_FOR_MLPERF_200B
   CHECKPOINT_EVERY_N_STEPS = 1000
@@ -1026,10 +1026,10 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
   """
   NUM_LAYERS = 32
   MODEL_DIMS = 4096
-  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = MODEL_DIMS * 4 # 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 128
-  PERCORE_BATCH_SIZE = 2  # 4
+  PERCORE_BATCH_SIZE = 1  # 4
   MAX_SEQ_LEN = 1024 * 2  # XD
   VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16

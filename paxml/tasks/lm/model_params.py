@@ -528,7 +528,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   TRAINABLE_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 16 * 1024
   RELATIVE_BIAS = False
-  USE_ROTARY_POSITION_EMB = True  # XD: False
+  USE_ROTARY_POSITION_EMB = False  # XD: False
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
   COMBINE_QKV = False  # XD: True
@@ -540,7 +540,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   # optimizer related
   DROPOUT_PROB = 0.0
   LEARNING_RATE = 2.5e-4
-  CLIP_GRADIENT_NORM_TO_VALUE = 5.0
+  CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # XD: 5.0
   WEIGHT_DECAY = 1e-1  # XD: -3
   SOFTMAX_CAP_LOGITS = None  # XD: 30.0
   ATTEN_LOGIT_CAP = -1.0 # XD: disable 50.0
@@ -584,7 +584,6 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     model_p.lm_tpl.model_dims = self.MODEL_DIMS
     model_p.lm_tpl.vocab_size = self.VOCAB_SIZE
 
-    if self.USE_ROTARY_POSITION_EMB: self.SEPARATE_EMBEDDING = False  # XD
     if self.SEPARATE_EMBEDDING:
       model_p.lm_tpl.separate_embedding_tpl = pax_fiddle.Config(
           layers.Embedding
