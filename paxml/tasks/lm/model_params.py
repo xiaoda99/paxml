@@ -524,15 +524,15 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   PACKED_INPUT = True
 
   USE_REPEATED_LAYER = False
-  SEPARATE_EMBEDDING = True # XD: False
+  SEPARATE_EMBEDDING = False
   TRAINABLE_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 16 * 1024
   RELATIVE_BIAS = False
-  USE_ROTARY_POSITION_EMB = True  # XD: False
+  USE_ROTARY_POSITION_EMB = False
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
-  COMBINE_QKV = False  # XD: True
-  NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
+  COMBINE_QKV = True
+  NORMALIZATION_CLS = normalizations.LayerNorm  # XD add RmsNorm
   ACTIVATION_CLS = activations.ReLU
   USE_GATED_ACTIVATION = False
   DECAY_END = 100000
@@ -540,10 +540,10 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   # optimizer related
   DROPOUT_PROB = 0.0
   LEARNING_RATE = 2.5e-4
-  CLIP_GRADIENT_NORM_TO_VALUE = 1.0  # XD: 5.0
-  WEIGHT_DECAY = 1e-1  # XD: -3
-  SOFTMAX_CAP_LOGITS = None  # XD: 30.0
-  ATTEN_LOGIT_CAP = -1.0 # XD: disable 50.0
+  CLIP_GRADIENT_NORM_TO_VALUE = 5.0
+  WEIGHT_DECAY = 1e-3
+  SOFTMAX_CAP_LOGITS = 30.0
+  ATTEN_LOGIT_CAP = 50.0
   # Autodiff remat.
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
 
@@ -605,8 +605,6 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
           layers.TrainablePositionalEmbedding,
           max_seq_length=self.TRAINABLE_PE_MAX_SEQ_LEN,
       )
-    elif self.USE_ROTARY_POSITION_EMB:
-      model_p.lm_tpl.position_emb_tpl = None  # XD
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
 
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
@@ -624,9 +622,9 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     transformer_layer_p.tr_atten_tpl.atten_logit_cap = self.ATTEN_LOGIT_CAP
     transformer_layer_p.norm_policy = self.NORM_POLICY
     transformer_layer_p.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
-    transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = True # not self.USE_ROTARY_POSITION_EMB  # XD
-    transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False  # XD
-    transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
+    # transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = True # not self.USE_ROTARY_POSITION_EMB  # XD
+    # transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = True  # XD: True
+    # transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
     transformer_layer_p.tr_atten_tpl.use_bias = False
     transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
     transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD

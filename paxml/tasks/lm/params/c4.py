@@ -705,11 +705,13 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   NUM_HEADS = 12
   # Defaults to MODEL_DIMS // NUM_HEADS.
   DIMS_PER_HEAD = None
+  LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
   FPROP_DTYPE = jnp.bfloat16
 
   ICI_MESH_SHAPE = [1, 8, 1]
 
+  SEPARATE_EMBEDDING = True  # XD
   USE_ROTARY_POSITION_EMB = True
 
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
