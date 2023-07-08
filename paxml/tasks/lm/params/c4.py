@@ -695,6 +695,27 @@ class C4SpmdGpt3AdamOrgHPBS1p5k1536Replicas(C4SpmdGpt3AdamOrgHP):
   EVAL_INTERVAL_STEPS = 25
   SUMMARY_INTERVAL_STEPS = 1
 
+@experiment_registry.register
+class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
+  r"""small GPT-3 config with RoPE.
+  """
+  NUM_LAYERS = 12
+  MODEL_DIMS = 768
+  HIDDEN_DIMS = MODEL_DIMS * 4
+  NUM_HEADS = 12
+  # Defaults to MODEL_DIMS // NUM_HEADS.
+  DIMS_PER_HEAD = None
+  PERCORE_BATCH_SIZE = 4
+  FPROP_DTYPE = jnp.bfloat16
+
+  ICI_MESH_SHAPE = [1, 8, 1]
+
+  USE_ROTARY_POSITION_EMB = True
+
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    task_p = super().task()
+    task_p.model.lm_tpl.position_emb_tpl = None
+    return task_p
 
 @experiment_registry.register
 class C4SpmdPipelineAdam(TransformerLmSpmdPipelineAdam, C4UnsupervisedDataset):
@@ -1026,11 +1047,11 @@ class C4SpmdLLaMA7BAdam32Replicas(C4SpmdAdam):  # XD
   """
   NUM_LAYERS = 32
   MODEL_DIMS = 4096
-  HIDDEN_DIMS = MODEL_DIMS * 4 # 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 128
   PERCORE_BATCH_SIZE = 1  # 4
-  MAX_SEQ_LEN = 1024 * 2  # XD
+  MAX_SEQ_LEN = 2048  # XD
   VOCAB_SIZE = 32000  # XD
   FPROP_DTYPE = jnp.bfloat16
   USE_REPEATED_LAYER = True
@@ -1052,7 +1073,7 @@ class C4SpmdLLaMA1BAdam32Replicas(C4SpmdLLaMA7BAdam32Replicas):  # XD
   """
   NUM_LAYERS = 24
   MODEL_DIMS = 2048
-  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
+  HIDDEN_DIMS = MODEL_DIMS * 4  # 5504  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
   DIMS_PER_HEAD = 128
   PERCORE_BATCH_SIZE = 8  # 4

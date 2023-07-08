@@ -528,11 +528,11 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
   TRAINABLE_POSITION_EMB = False
   TRAINABLE_PE_MAX_SEQ_LEN = 16 * 1024
   RELATIVE_BIAS = False
-  USE_ROTARY_POSITION_EMB = False  # XD: False
+  USE_ROTARY_POSITION_EMB = True  # XD: False
   NORM_POLICY = 'pre'
   ENABLE_DCONV = False
   COMBINE_QKV = False  # XD: True
-  # NORMALIZATION_CLS = normalizations.LayerNorm  # XD add RmsNorm
+  NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
   ACTIVATION_CLS = activations.ReLU
   USE_GATED_ACTIVATION = False
   DECAY_END = 100000
@@ -607,7 +607,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       )
     elif self.USE_ROTARY_POSITION_EMB:
       model_p.lm_tpl.position_emb_tpl = None  # XD
-    # model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
+    model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
 
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
     stacked_transformer_tpl.model_dims = self.MODEL_DIMS
@@ -623,10 +623,10 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     )
     transformer_layer_p.tr_atten_tpl.atten_logit_cap = self.ATTEN_LOGIT_CAP
     transformer_layer_p.norm_policy = self.NORM_POLICY
-    # transformer_layer_p.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
-    transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = False  # XD
+    transformer_layer_p.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
+    transformer_layer_p.tr_atten_tpl.internal_enable_query_scale = True # not self.USE_ROTARY_POSITION_EMB  # XD
     transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False  # XD
-    transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = True  # XD
+    transformer_layer_p.tr_atten_tpl.scale_logits_by_head_dims = False # self.USE_ROTARY_POSITION_EMB  # XD
     transformer_layer_p.tr_atten_tpl.use_bias = False
     transformer_layer_p.tr_atten_tpl.combine_qkv = self.COMBINE_QKV
     transformer_layer_p.tr_fflayer_tpl.has_bias = not self.USE_GATED_ACTIVATION  # XD
@@ -635,7 +635,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     )
     transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
         self.USE_GATED_ACTIVATION)
-    # transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(self.NORMALIZATION_CLS)  # XD
     transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
     # pytype: enable=attribute-error  # enable-nested-classes
 
