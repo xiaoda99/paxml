@@ -37,6 +37,7 @@ from praxis import layers
 from praxis import optimizers
 from praxis import pax_fiddle
 from praxis import schedules
+from praxis.layers import normalizations  # XD
 from praxis.layers import transformers
 import seqio
 import t5.data
@@ -560,12 +561,16 @@ def configure_gpt3_task(
     stacked_p = stacked_p.block
   transformer_layer_p = stacked_p.transformer_layer_params_tpl
 
-  transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-  transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-  model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+  transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+  transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+  model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+  # transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON  # XD remove
+  # transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON  # XD remove
+  # model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON  #Q XD remove
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
-  transformer_layer_p.tr_atten_tpl.use_bias = True
+  transformer_layer_p.tr_atten_tpl.use_bias = False  # XD: True
 
+  # transformer_layer_p.tr_fflayer_tpl.has_bias = False  # XD add
   transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True
 
   for atten_p in (
@@ -699,12 +704,14 @@ class C4SpmdGpt3AdamOrgHPBS1p5k1536Replicas(C4SpmdGpt3AdamOrgHP):
 class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   r"""small GPT-3 config with RoPE.
   """
+  VOCAB_SIZE = 32000  # XD
   NUM_LAYERS = 12
   MODEL_DIMS = 768
   HIDDEN_DIMS = MODEL_DIMS * 4
   NUM_HEADS = 12
   # Defaults to MODEL_DIMS // NUM_HEADS.
   DIMS_PER_HEAD = None
+  NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
   LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
   FPROP_DTYPE = jnp.bfloat16
