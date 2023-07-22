@@ -605,6 +605,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
 
     stacked_transformer_tpl = pax_fiddle.Config(layers.StackedTransformer)
     stacked_transformer_tpl.model_dims = self.MODEL_DIMS
+    stacked_transformer_tpl.hidden_dims = self.HIDDEN_DIMS
     stacked_transformer_tpl.num_layers = self.NUM_LAYERS
     stacked_transformer_tpl.num_heads = num_heads
     stacked_transformer_tpl.dim_per_head = self.DIMS_PER_HEAD
