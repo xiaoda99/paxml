@@ -287,7 +287,7 @@ class BaseTrainProgram(Program):
 
   # TODO(laigd): further split this into smaller modules and add program APIs
   # correspondingly.
-  @py_utils.benchmark('[PAX STATUS]: ', first_n=20)
+  @py_utils.benchmark('[PAX STATUS]: ', first_n=20//4)  # XD
   def run(self, state: TrainState, step: int) -> TrainProgramOutput:
     train_p = self._task.train
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieving inputs.', 5)

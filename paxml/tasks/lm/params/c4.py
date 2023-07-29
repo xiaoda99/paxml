@@ -564,14 +564,21 @@ def configure_gpt3_task(
   transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  # transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON  # XD remove
-  # transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON  # XD remove
-  # model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON  #Q XD remove
+  if False and cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
+    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
+    model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
+  if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
+    transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+    model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
-  transformer_layer_p.tr_atten_tpl.use_bias = False  # XD: True
+  transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
+  if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS  # XD
 
-  # transformer_layer_p.tr_fflayer_tpl.has_bias = False  # XD add
-  transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True
+  transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
+  if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
+  if not cls.USE_GATED_ACTIVATION: transformer_layer_p.hidden_dims = cls.MODEL_DIMS * 4 # XD add
 
   for atten_p in (
       transformer_layer_p.tr_atten_tpl,
@@ -669,7 +676,7 @@ class C4SpmdGpt3AdamOrgHP(C4SpmdAdam):
   LR_COS_MIN_RATIO = 0.1
 
   # Training target
-  TARGET_LOG_PPLX = 2.69
+  TARGET_LOG_PPLX = 2.69 - 2.69  # XD
 
   # Autodiff remat.
   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
@@ -704,27 +711,112 @@ class C4SpmdGpt3AdamOrgHPBS1p5k1536Replicas(C4SpmdGpt3AdamOrgHP):
 class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   r"""small GPT-3 config with RoPE.
   """
-  VOCAB_SIZE = 32000  # XD
+  MAX_SEQ_LEN = 2048 // 2  # XD
   NUM_LAYERS = 12
   MODEL_DIMS = 768
-  HIDDEN_DIMS = MODEL_DIMS * 4
+  ACTIVATION_CLS = layers.SiLU  # layers.SiLU/GELU  # XD
+  USE_GATED_ACTIVATION = True  # XD
+  HIDDEN_DIMS = MODEL_DIMS * 4 # 2048  # XD: MODEL_DIMS * 4
   NUM_HEADS = 12
   # Defaults to MODEL_DIMS // NUM_HEADS.
   DIMS_PER_HEAD = None
+  USE_BIAS = False # XD add
   NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
   LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
   FPROP_DTYPE = jnp.bfloat16
 
-  ICI_MESH_SHAPE = [1, 8, 1]
+  # ICI_MESH_SHAPE = [1, 8, 4]
+  ICI_MESH_SHAPE = [1, 4, 2]
 
   SEPARATE_EMBEDDING = True  # XD
   USE_ROTARY_POSITION_EMB = True
+  TRAINABLE_PE_MAX_SEQ_LEN = 2048  # XD add
+
+  SUMMARY_INTERVAL_STEPS = 10  # XD
+  CHECKPOINT_EVERY_N_STEPS = 100
+  CHECKPOINT_MAX_TO_KEEP = 1
 
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     task_p = super().task()
-    task_p.model.lm_tpl.position_emb_tpl = None
+    if self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
     return task_p
+
+@experiment_registry.register
+class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
+  MAX_SEQ_LEN = 2048 #// 2  # XD
+  VOCAB_SIZE = 32000
+  NUM_LAYERS = 32
+  MODEL_DIMS = 4096
+  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 32
+  NUM_GROUPS = -1  # XD
+  # DIMS_PER_HEAD = 128
+  COMBINE_QKV = False
+  
+  PERCORE_BATCH_SIZE = 16
+  #ICI_MESH_SHAPE = [1, 8 // NUM_GROUPS, NUM_GROUPS]
+  # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
+  # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
+  #ICI_MESH_SHAPE = [1, 32, 1]  # bs=4*8, combine_qkv 0.187
+  #ICI_MESH_SHAPE = [1, 16, 1]  # bs=4*1*16*1, v5-16: seqlen 1024 0.388  seqlen 2048 0.23
+  #ICI_MESH_SHAPE = [1, 8, 2] 
+  ICI_MESH_SHAPE = [1, 16, 2]  # bs=16*2*16*2, v4-64: 0.175
+  CHECKPOINT_EVERY_N_STEPS=50
+
+@experiment_registry.register
+class C4SpmdGpt313BRoPE(C4SpmdGpt3SmallRoPE):  # XD
+  VOCAB_SIZE = 32000  # XD
+  NUM_LAYERS = 40
+  MODEL_DIMS = 5120
+  HIDDEN_DIMS = 13824  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 40
+  # DIMS_PER_HEAD = 128
+  COMBINE_QKV = False
+  
+  PERCORE_BATCH_SIZE = 6
+  ICI_MESH_SHAPE = [1, 16, 4]  # bs=6*8*8, 0.032
+
+@experiment_registry.register
+class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):  # XD
+  NUM_LAYERS = 24
+  MODEL_DIMS = 1024
+  HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 16
+  # NUM_GROUPS = 1  # XD
+  COMBINE_QKV = True
+  
+  # LEARNING_RATE = 6e-5
+  LR_COS_WARMUP = 256   # XD
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 30000
+
+  PERCORE_BATCH_SIZE = 16
+  ICI_MESH_SHAPE = [1, 32, 1]  # 0.38
+  # ICI_MESH_SHAPE = [32, 1, 1]
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):  # XD
+  NUM_GROUPS = 1  # 0.208
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHx2(C4SpmdLlamaMediumResTH):  # XD
+  NUM_HEADS = 16 * 2  # 0.107
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHx4(C4SpmdLlamaMediumResTH):  # XD
+  NUM_HEADS = 16 * 4  # 0.059
+
+@experiment_registry.register
+class C4SpmdGpt3XLRoPE(C4SpmdGpt3SmallRoPE):  # XD
+  NUM_LAYERS = 24
+  MODEL_DIMS = 2048
+  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 16
+  # DIMS_PER_HEAD = 128
+  
+  PERCORE_BATCH_SIZE = 4 * 4
+  ICI_MESH_SHAPE = [1, 8, 4]
 
 @experiment_registry.register
 class C4SpmdPipelineAdam(TransformerLmSpmdPipelineAdam, C4UnsupervisedDataset):
