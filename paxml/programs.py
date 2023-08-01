@@ -241,8 +241,9 @@ class BaseTrainProgram(Program):
     self._initial_step = init_step
 
     # Creates the train summary writer and handler.
-    summary_base_dir = get_summary_base_dir(job_log_dir)
-    summary_train_dir = summary_base_dir / 'train'
+    # summary_base_dir = get_summary_base_dir(job_log_dir)
+    # summary_train_dir = summary_base_dir / 'train'
+    summary_train_dir = job_log_dir.parent / 'summaries' / 'train' / job_log_dir.name  # XD
     self._train_summary_writer = self._exitstack.enter_context(
         summary_utils.get_summary_writer(summary_train_dir)
     )
@@ -258,7 +259,8 @@ class BaseTrainProgram(Program):
 
     # Creates the summary writer and handler for eval on train input.
     if not train_p.eval_skip_train:
-      summary_eval_train_dir = summary_base_dir / 'eval_train'
+      # summary_eval_train_dir = summary_base_dir / 'eval_train'
+      summary_eval_train_dir = job_log_dir.parent / 'summaries' / 'eval_train' / job_log_dir.name  # XD
       eval_train_summary_writer = self._exitstack.enter_context(
           summary_utils.get_summary_writer(summary_eval_train_dir)
       )

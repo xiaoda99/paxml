@@ -574,7 +574,10 @@ def configure_gpt3_task(
     model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
-  if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS  # XD
+  # XD
+  if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS
+  if hasattr(cls, 'SQUEEZE_RATIO'): transformer_layer_p.tr_atten_tpl.squeeze_ratio = cls.SQUEEZE_RATIO
+  if hasattr(cls, 'SQUEEZE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.squeeze_activation_cls = cls.SQUEEZE_ACTIVATION_CLS
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -784,7 +787,7 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):  # XD
   HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
   # NUM_GROUPS = 1  # XD
-  COMBINE_QKV = True
+  COMBINE_QKV = False
   
   # LEARNING_RATE = 6e-5
   LR_COS_WARMUP = 256   # XD
@@ -792,23 +795,41 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):  # XD
   LR_COS_DECAY_END = 30000
 
   PERCORE_BATCH_SIZE = 16
-  ICI_MESH_SHAPE = [1, 32, 1]  # 0.38
+  ICI_MESH_SHAPE = [1, 32, 1]  # 0.493  0.55
   # ICI_MESH_SHAPE = [32, 1, 1]
 
 @experiment_registry.register
-class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):  # XD
-  NUM_GROUPS = 1  # 0.208
+class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):  # XD
+  DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
 
 @experiment_registry.register
-class C4SpmdLlamaMediumResTHx2(C4SpmdLlamaMediumResTH):  # XD
-  NUM_HEADS = 16 * 2  # 0.107
+class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1  # 0.37, res 0.208, 
 
 @experiment_registry.register
-class C4SpmdLlamaMediumResTHx4(C4SpmdLlamaMediumResTH):  # XD
-  NUM_HEADS = 16 * 4  # 0.059
+class C4SpmdLlamaMediumResTHFFN4(C4SpmdLlamaMediumResTH):
+  SQUEEZE_RATIO = 4  # res 0.173
 
 @experiment_registry.register
-class C4SpmdGpt3XLRoPE(C4SpmdGpt3SmallRoPE):  # XD
+class C4SpmdLlamaMediumResTHFFN4GELU(C4SpmdLlamaMediumResTH):
+  SQUEEZE_RATIO = 4  # res 0.173
+  SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHv4(C4SpmdLlamaMediumResTH):
+  PERCORE_BATCH_SIZE = 16 * 2
+  ICI_MESH_SHAPE = [1, 16, 1]
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHx2(C4SpmdLlamaMediumResTH):
+  NUM_HEADS = 16 * 2  # res 0.105, v5 0.195
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHx4(C4SpmdLlamaMediumResTH):
+  NUM_HEADS = 16 * 4  # res 0.059
+
+@experiment_registry.register
+class C4SpmdGpt3XLRoPE(C4SpmdGpt3SmallRoPE):
   NUM_LAYERS = 24
   MODEL_DIMS = 2048
   HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
