@@ -578,6 +578,8 @@ def configure_gpt3_task(
   if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS
   if hasattr(cls, 'SQUEEZE_RATIO'): transformer_layer_p.tr_atten_tpl.squeeze_ratio = cls.SQUEEZE_RATIO
   if hasattr(cls, 'SQUEEZE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.squeeze_activation_cls = cls.SQUEEZE_ACTIVATION_CLS
+  if hasattr(cls, 'DIM_PER_HEAD_V'): transformer_layer_p.tr_atten_tpl.dim_per_head_v = cls.DIM_PER_HEAD_V
+  if hasattr(cls, 'VALUE_GATE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.value_gate_activation_cls = cls.VALUE_GATE_ACTIVATION_CLS
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -755,17 +757,24 @@ class C4SpmdGpt37BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   NUM_HEADS = 32
   NUM_GROUPS = -1  # XD
   # DIMS_PER_HEAD = 128
-  COMBINE_QKV = False
+  COMBINE_QKV = True
   
-  PERCORE_BATCH_SIZE = 16
+  PERCORE_BATCH_SIZE = 8 * 2
   #ICI_MESH_SHAPE = [1, 8 // NUM_GROUPS, NUM_GROUPS]
-  # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2*8, 0.146, combine_qkv 0.1514 
-  # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8*8, 0.176, combine_qkv 0.180
-  #ICI_MESH_SHAPE = [1, 32, 1]  # bs=4*8, combine_qkv 0.187
-  #ICI_MESH_SHAPE = [1, 16, 1]  # bs=4*1*16*1, v5-16: seqlen 1024 0.388  seqlen 2048 0.23
-  #ICI_MESH_SHAPE = [1, 8, 2] 
-  ICI_MESH_SHAPE = [1, 16, 2]  # bs=16*2*16*2, v4-64: 0.175
+  # ICI_MESH_SHAPE = [4, 1, 8]  # bs=2, 0.146, combine_qkv 0.1514  by xd
+  # ICI_MESH_SHAPE = [1, 8, 4]  # bs=8, 0.044, combine_qkv 0.045  by xd
+  #ICI_MESH_SHAPE = [1, 32, 1]  # bs=4, combine_qkv 0.0935  by xd
+  ICI_MESH_SHAPE = [1, 32, 1]  # v5-64 bs=8 0.131 by xd
   CHECKPOINT_EVERY_N_STEPS=50
+
+@experiment_registry.register
+class C4SpmdGpt37BRoPEv4(C4SpmdGpt37BRoPE):
+  PERCORE_BATCH_SIZE = 8
+  # ICI_MESH_SHAPE = [1, 32, 1]  # bs=16*2*16*1, v4-64: 0.175 by lsp seqlen 1024
+  #ICI_MESH_SHAPE = [1, 16, 1]  # bs=4*1*16*1, v4-16: seqlen 1024 0.388  seqlen 2048 0.23
+  # ICI_MESH_SHAPE = [1, 8, 2]  # v4-32 bs=8 0.119  by xd
+  ICI_MESH_SHAPE = [1, 16, 1]  # v4-32 bs=8 0.138 by lsp
+  # ICI_MESH_SHAPE = [1, 16, 2]  # v4-64 bs=8 0.121 by xd
 
 @experiment_registry.register
 class C4SpmdGpt313BRoPE(C4SpmdGpt3SmallRoPE):  # XD
@@ -781,7 +790,7 @@ class C4SpmdGpt313BRoPE(C4SpmdGpt3SmallRoPE):  # XD
   ICI_MESH_SHAPE = [1, 16, 4]  # bs=6*8*8, 0.032
 
 @experiment_registry.register
-class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):  # XD
+class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   NUM_LAYERS = 24
   MODEL_DIMS = 1024
   HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
@@ -792,14 +801,40 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):  # XD
   # LEARNING_RATE = 6e-5
   LR_COS_WARMUP = 256   # XD
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
-  LR_COS_DECAY_END = 30000
+  LR_COS_DECAY_END = 50000
 
   PERCORE_BATCH_SIZE = 16
-  ICI_MESH_SHAPE = [1, 32, 1]  # 0.493  0.55
+  ICI_MESH_SHAPE = [1, 32, 1]  # 0.549， combine_qkv 0.493???!!!, v5 0.436???
   # ICI_MESH_SHAPE = [32, 1, 1]
 
 @experiment_registry.register
-class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):  # XD
+class C4SpmdLlamaMediumv4(C4SpmdLlamaMedium):
+  PERCORE_BATCH_SIZE = 16 * 2
+  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.619
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGA(C4SpmdLlamaMedium):
+  DIM_PER_HEAD_V = 128  # 0.6
+  VALUE_GATE_ACTIVATION_CLS = layers.SiLU
+  HIDDEN_DIMS = 1408
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGAv4(C4SpmdLlamaMediumGA):
+  PERCORE_BATCH_SIZE = 16 * 2
+  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.618
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGA256x8(C4SpmdLlamaMediumGA):
+  NUM_HEADS = 8
+  DIM_PER_HEAD_V = 256  # 0.642, v5 0.544???
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
+  PERCORE_BATCH_SIZE = 16 * 2
+  ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.733
+
+@experiment_registry.register
+class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):
   DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
 
 @experiment_registry.register
