@@ -575,11 +575,17 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
   # XD
-  if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS
-  if hasattr(cls, 'SQUEEZE_RATIO'): transformer_layer_p.tr_atten_tpl.squeeze_ratio = cls.SQUEEZE_RATIO
-  if hasattr(cls, 'SQUEEZE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.squeeze_activation_cls = cls.SQUEEZE_ACTIVATION_CLS
-  if hasattr(cls, 'DIM_PER_HEAD_V'): transformer_layer_p.tr_atten_tpl.dim_per_head_v = cls.DIM_PER_HEAD_V
-  if hasattr(cls, 'VALUE_GATE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.value_gate_activation_cls = cls.VALUE_GATE_ACTIVATION_CLS
+  # if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS
+  # if hasattr(cls, 'SQUEEZE_RATIO'): transformer_layer_p.tr_atten_tpl.squeeze_ratio = cls.SQUEEZE_RATIO
+  # if hasattr(cls, 'SQUEEZE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.squeeze_activation_cls = cls.SQUEEZE_ACTIVATION_CLS
+  # if hasattr(cls, 'DIM_PER_HEAD_V'): transformer_layer_p.tr_atten_tpl.dim_per_head_v = cls.DIM_PER_HEAD_V
+  # if hasattr(cls, 'VALUE_GATE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.value_gate_activation_cls = cls.VALUE_GATE_ACTIVATION_CLS
+  for name in ['num_groups', 'squeeze_ratio', 'squeeze_activation_cls',
+              'dim_per_head_v', 'value_gate_activation_cls',
+              'float32_logits', 'qk_norm']:
+    NAME = name.upper()
+    if hasattr(cls, NAME):
+      setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -827,6 +833,18 @@ class C4SpmdLlamaMediumGAv4(C4SpmdLlamaMediumGA):
 class C4SpmdLlamaMediumGA256x8(C4SpmdLlamaMediumGA):
   NUM_HEADS = 8
   DIM_PER_HEAD_V = 256  # 0.642, v5 0.544???
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGA256x8FP32logits(C4SpmdLlamaMediumGA256x8):
+  NUM_HEADS = 8
+  DIM_PER_HEAD_V = 256
+  FLOAT32_LOGITS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumGA256x8QKNorm(C4SpmdLlamaMediumGA256x8):
+  NUM_HEADS = 8
+  DIM_PER_HEAD_V = 256
+  QK_NORM = True
 
 @experiment_registry.register
 class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
