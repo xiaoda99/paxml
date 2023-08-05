@@ -578,7 +578,7 @@ def configure_gpt3_task(
   for name in ['num_groups', 'project_logits', 'project_probs', 'squeeze_ratio', 'squeeze_activation_cls',
               'dim_per_head_v', 'value_gate_activation_cls',
               'float32_logits', 'qk_norm',
-              'shared_qk_dim', 'shared_ov_dim', 'scale_shared_key', 'rotate_shared_qk',
+              'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
               ]:
     NAME = name.upper()
     if hasattr(cls, NAME):
@@ -823,6 +823,66 @@ class C4SpmdLlamaMediumShareHeads128(C4SpmdLlamaMedium):
   SHARED_QK_DIM = 128  # 0.464
   SHARED_OV_DIM = 128
   ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x16ScaleInit05_15(C4SpmdLlamaMedium):
+  DIMS_PER_HEAD = 48
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 256  # 0.394
+  SHARED_OV_DIM = 256
+  DIM_PER_SHARED_HEAD = 16
+  SCALE_INIT = WeightInit.Uniform(0.05)
+  SCALE_BIAS = 0.1
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x13ScaleInit05_15(C4SpmdLlamaMedium):
+  DIMS_PER_HEAD = 48
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 208  # 0.424
+  SHARED_OV_DIM = 208
+  DIM_PER_SHARED_HEAD = 16
+  SCALE_INIT = WeightInit.Uniform(0.05)
+  SCALE_BIAS = 0.1
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x8x2ScaleInit05_15(C4SpmdLlamaMedium):
+  DIMS_PER_HEAD = 48
+  NUM_GROUPS = 2
+  SHARED_QK_DIM = 256  # 0.462
+  SHARED_OV_DIM = 256
+  DIM_PER_SHARED_HEAD = 16
+  SCALE_INIT = WeightInit.Uniform(0.05)
+  SCALE_BIAS = 0.1
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 128  # 0.461
+  SHARED_OV_DIM = 128
+  DIM_PER_SHARED_HEAD = 16
+  SCALE_INIT = WeightInit.Uniform(0.05)
+  SCALE_BIAS = 0.1
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeadsRot16x8ScaleInit05_15(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
+  ROTATE_SHARED_QK = True  # 0.45
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x8ScaleInit00_10(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
+  SCALE_BIAS = 0.05
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads128x1ScaleInit05_15(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
+  DIM_PER_SHARED_HEAD = 1  # 0.464
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads128x1ScaleInit25_75(C4SpmdLlamaMediumShareHeads16x8ScaleInit05_15):
+  SCALE_INIT = WeightInit.Uniform(0.25)
+  SCALE_BIAS = 0.5
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareHeadsRot(C4SpmdLlamaMediumShareHeads):
