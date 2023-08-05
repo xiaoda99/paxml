@@ -575,14 +575,11 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
   # XD
-  # if hasattr(cls, 'NUM_GROUPS'): transformer_layer_p.tr_atten_tpl.num_groups = cls.NUM_GROUPS
-  # if hasattr(cls, 'SQUEEZE_RATIO'): transformer_layer_p.tr_atten_tpl.squeeze_ratio = cls.SQUEEZE_RATIO
-  # if hasattr(cls, 'SQUEEZE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.squeeze_activation_cls = cls.SQUEEZE_ACTIVATION_CLS
-  # if hasattr(cls, 'DIM_PER_HEAD_V'): transformer_layer_p.tr_atten_tpl.dim_per_head_v = cls.DIM_PER_HEAD_V
-  # if hasattr(cls, 'VALUE_GATE_ACTIVATION_CLS'): transformer_layer_p.tr_atten_tpl.value_gate_activation_cls = cls.VALUE_GATE_ACTIVATION_CLS
-  for name in ['num_groups', 'squeeze_ratio', 'squeeze_activation_cls',
+  for name in ['num_groups', 'project_logits', 'project_probs', 'squeeze_ratio', 'squeeze_activation_cls',
               'dim_per_head_v', 'value_gate_activation_cls',
-              'float32_logits', 'qk_norm']:
+              'float32_logits', 'qk_norm',
+              'shared_qk_dim', 'shared_ov_dim', 'scale_shared_key', 'rotate_shared_qk',
+              ]:
     NAME = name.upper()
     if hasattr(cls, NAME):
       setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
@@ -814,6 +811,59 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   # ICI_MESH_SHAPE = [32, 1, 1]
 
 @experiment_registry.register
+class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 96  # 0.481
+  SHARED_OV_DIM = 96
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads128(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 128  # 0.464
+  SHARED_OV_DIM = 128
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeadsRot(C4SpmdLlamaMediumShareHeads):
+  ROTATE_SHARED_QK = True  # 0.470
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeadsRot128(C4SpmdLlamaMediumShareHeads128):
+  ROTATE_SHARED_QK = True  # 0.455
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeadsScaleKRot128(C4SpmdLlamaMediumShareHeadsRot128):
+  SCALE_SHARED_KEY = True  # 0.436
+
+@experiment_registry.register
+class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):
+  # DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
+  DIMS_PER_HEAD = 160  # 0.419
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareQK(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 96  # 0.207
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareOV(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_OV_DIM = 96  # 0.204
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareQK128(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 128  #
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareOV128(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_OV_DIM = 128  # 0.489
+
+@experiment_registry.register
 class C4SpmdLlamaMediumv4(C4SpmdLlamaMedium):
   PERCORE_BATCH_SIZE = 16 * 2
   ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.619
@@ -850,10 +900,6 @@ class C4SpmdLlamaMediumGA256x8QKNorm(C4SpmdLlamaMediumGA256x8):
 class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
   PERCORE_BATCH_SIZE = 16 * 2
   ICI_MESH_SHAPE = [1, 32 // 2, 1]  # v4 0.733
-
-@experiment_registry.register
-class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):
-  DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):

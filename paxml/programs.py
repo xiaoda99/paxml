@@ -429,7 +429,7 @@ class BaseTrainProgram(Program):
       self, step: int, new_step: int, train_outputs: StepFnOutput
   ) -> Optional[float]:
     # Compute steps/sec every this many steps, revisit when necessary.
-    compute_steps_per_sec_interval_steps = 10
+    compute_steps_per_sec_interval_steps = self._task.train.summary_interval_steps  # XD: 10
 
     steps_per_sec = None
     should_compute_steps_per_sec = (
