@@ -798,6 +798,7 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   MODEL_DIMS = 1024
   HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 16
+  DIMS_PER_HEAD = 64
   # NUM_GROUPS = 1  # XD
   COMBINE_QKV = False
   
@@ -816,6 +817,23 @@ class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
   SHARED_QK_DIM = 96  # 0.481
   SHARED_OV_DIM = 96
   ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x64(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1
+  SHARED_QK_DIM = 1024  # 0.233, float32_logits 0.218
+  SHARED_OV_DIM = 1024
+  # NUM_SHARED_HEADS = 16
+  DIM_PER_SHARED_HEAD = 64
+  FLOAT32_LOGITS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareQK16x64(C4SpmdLlamaMediumShareHeads16x64):
+  SHARED_OV_DIM = 0  # 0.298
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareOV16x64(C4SpmdLlamaMediumShareHeads16x64):
+  SHARED_QK_DIM = 0  # 0.296
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareHeads128(C4SpmdLlamaMedium):
@@ -897,9 +915,9 @@ class C4SpmdLlamaMediumShareHeadsScaleKRot128(C4SpmdLlamaMediumShareHeadsRot128)
   SCALE_SHARED_KEY = True  # 0.436
 
 @experiment_registry.register
-class C4SpmdLlamaMediumLargeHead(C4SpmdLlamaMedium):
-  # DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
-  DIMS_PER_HEAD = 160  # 0.419
+class C4SpmdLlamaMediumDimPerHead128(C4SpmdLlamaMedium):
+  DIMS_PER_HEAD = 128   # 192 0.4, 128 0.47
+  # DIMS_PER_HEAD = 160  # 0.419
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareQK(C4SpmdLlamaMedium):
@@ -963,7 +981,27 @@ class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.37, res 0.208, 
+  NUM_GROUPS = 1  # 0.37, res 0.208/0.211
+  PROJECT_LOGITS = True
+  PROJECT_PROBS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogits(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1  # 0.307
+  PROJECT_LOGITS = True 
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbs(C4SpmdLlamaMedium):
+  NUM_GROUPS = 1  # 0.304
+  PROJECT_PROBS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFP32logits(C4SpmdLlamaMediumResTH):
+  FLOAT32_LOGITS = True  # 0.149
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHGaussian05(C4SpmdLlamaMediumResTH):
+  SCALE_INIT = WeightInit.Gaussian(0.05)
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHFFN4(C4SpmdLlamaMediumResTH):
