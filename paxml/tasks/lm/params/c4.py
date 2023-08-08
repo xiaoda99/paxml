@@ -575,7 +575,8 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
   # XD
-  for name in ['num_groups', 'project_logits', 'project_probs', 'squeeze_ratio', 'squeeze_activation_cls',
+  for name in ['num_groups', 'project_logits', 'project_probs', 'logits_residual', 'probs_residual', 
+              'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'probs_squeeze_ratio', 'probs_squeeze_activation_cls',
               'dim_per_head_v', 'value_gate_activation_cls',
               'float32_logits', 'qk_norm',
               'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
@@ -986,14 +987,76 @@ class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
   PROJECT_PROBS = True
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
+  LOGITS_SQUEEZE_RATIO = 2  
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsv4(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
+  PERCORE_BATCH_SIZE = 32
+  ICI_MESH_SHAPE = [1, 16, 1]  # 0.318
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHLogits(C4SpmdLlamaMedium):
   NUM_GROUPS = 1  # 0.307
   PROJECT_LOGITS = True 
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsGaussian05(C4SpmdLlamaMediumResTHLogits):
+  SCALE_INIT = WeightInit.Gaussian(0.05)
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHLogits(C4SpmdLlamaMediumResTHLogits):
+  RESIDUAL_LOGITS = False  # 0.38
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN1GELU(C4SpmdLlamaMediumResTHLogits):
+  SQUEEZE_RATIO = 1  # 0.279, bias 0.271
+  SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELU(C4SpmdLlamaMediumResTHLogits):
+  LOGITS_SQUEEZE_RATIO = 2  # 0.293, bias 0.290
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2(C4SpmdLlamaMediumResTHLogits):
+  SQUEEZE_RATIO = 2  #
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHLogitsFFN2GELU(C4SpmdLlamaMediumResTHLogitsFFN2GELU):
+  RESIDUAL_LOGITS = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN4GELU(C4SpmdLlamaMediumResTHLogitsFFN2GELU):
+  SQUEEZE_RATIO = 4  # 
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHProbs(C4SpmdLlamaMedium):
   NUM_GROUPS = 1  # 0.304
   PROJECT_PROBS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbsFFN2(C4SpmdLlamaMediumResTHProbs):
+  SQUEEZE_RATIO = 2  #
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbsFFN2GELU(C4SpmdLlamaMediumResTHProbsFFN2):
+  SQUEEZE_ACTIVATION_CLS = layers.GELU  #
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbsFFN2v4(C4SpmdLlamaMediumResTHProbs):
+  PERCORE_BATCH_SIZE = 32
+  ICI_MESH_SHAPE = [1, 16, 1]  # 0.395
+  SQUEEZE_RATIO = 2  #
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbsFFN2GELUv4(C4SpmdLlamaMediumResTHProbsFFN2v4):
+  SQUEEZE_ACTIVATION_CLS = layers.GELU  # 0.385
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHProbsFFN2ReLUv4(C4SpmdLlamaMediumResTHProbsFFN2v4):
+  SQUEEZE_ACTIVATION_CLS = layers.ReLU
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHFP32logits(C4SpmdLlamaMediumResTH):
