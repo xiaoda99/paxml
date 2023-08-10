@@ -144,6 +144,9 @@ class DefaultExecutor(base_executor.BaseExecutor):
     )
     if not task.train.enable_input_checkpointing:
       _maybe_update_latest_model_step(train_input_p, step, task)
+    if train_input_p.num_batches_to_skip is None and step is not None: # XD
+      train_input_p.num_batches_to_skip = step
+      logging.warning('In DefaultExecutor._maybe_create_train_input: set train_input_p.num_batches_to_skip = %d', step)
     train_input = instantiate(train_input_p)
 
     train_input_for_partitioner = (

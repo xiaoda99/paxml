@@ -688,7 +688,14 @@ class SeqIOInput(base_input.BaseInput):
     )
     if self.num_batches_to_skip:
       if self.is_training:
+        # with Timer(f'In SeqIOInput._get_dataset: skip {self.num_batches_to_skip} batches took'):  # XD
+        from datetime import datetime
+        start = datetime.now()
         ds = ds.skip(self.num_batches_to_skip)
+        end = datetime.now()
+        elapsed = str(end - start)
+        logging.warning('In SeqIOInput._get_dataset: skip %d batches took %s',
+          self.num_batches_to_skip, elapsed)
       else:
         logging.warning(
             (
