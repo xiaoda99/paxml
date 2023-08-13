@@ -49,6 +49,7 @@ from paxml import tf_data_service_lib
 from paxml import train
 from paxml import trainer_lib
 from paxml import tuning_lib
+from paxml.tasks.lm.params import global_cfg  # XD
 from praxis import pax_fiddle
 from praxis import py_utils
 
@@ -218,6 +219,21 @@ flags.DEFINE_integer(
 
 # Debugging flag
 
+job_log_dir = None  # XD
+
+def get_tpu_type(exp_name):  # XD
+  if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
+  elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
+  else: return exp_name, 'v3'
+
+def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
+  if tpu_type == 'v4':
+    replica, data, mdl = experiment_config.ICI_MESH_SHAPE
+    # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
+    experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
+      if mdl > 1 else [replica, data // 2, mdl]
+    experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
+  return experiment_config
 
 @py_utils.benchmark('[PAX STATUS]: ')
 def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
@@ -240,6 +256,19 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
   experiment_class = experiment_registry.get(experiment_name)
   if experiment_class is not None:
     return experiment_class
+  # XD
+  experiment_name, tpu_type = get_tpu_type(experiment_name)
+  if tpu_type in global_cfg.tputype2zone:
+    def append_zone(gs_path):
+      return gs_path.replace('common_datasets',
+        f'common_datasets_{global_cfg.tputype2zone[tpu_type]}')
+    global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
+    global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
+    global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
+  if tpu_type == 'v4':
+    experiment_class = experiment_registry.get(experiment_name)
+    if experiment_class is not None:
+      return adjust_config_by_tpu(experiment_class, tpu_type)
   raise ValueError(
       f'Could not find experiment `{experiment_name}`.\nRegistered experiments '
       f'are: {pprint.pformat(experiment_registry.get_all())}'
@@ -375,7 +404,7 @@ def _setup_xm_work_unit():
   )
   if jax.process_index() == 0:
     work_unit.create_artifact(
-        platform.ArtifactType.DIRECTORY, str(_JOB_LOGDIR.value), 'job_log_dir'
+        platform.ArtifactType.DIRECTORY, str(job_log_dir), 'job_log_dir'  # XD: _JOB_LOGDIR.value -> job_log_dir
     )
   return work_unit
 
@@ -420,7 +449,7 @@ def run(
     run_experiment(
         experiment_config,
         work_unit,
-        job_log_dir=_JOB_LOGDIR.value,
+        job_log_dir=job_log_dir,  # XD: _JOB_LOGDIR.value -> job_log_dir
         early_stopping_fn=None,
         enable_checkpoint_saving=enable_checkpoint_saving)
   else:
@@ -431,7 +460,7 @@ def run(
         trial_fn=run_experiment,
         experiment_config=experiment_config,
         work_unit=work_unit,
-        job_log_dir=_JOB_LOGDIR.value,
+        job_log_dir=job_log_dir,  # XD: _JOB_LOGDIR.value -> job_log_dir
         study=FLAGS.study,
         pythia_port=FLAGS.pythia_port,
         is_metric_reporting_role=(FLAGS.metrics_from == FLAGS.mode),
@@ -471,7 +500,23 @@ def _main(argv: Sequence[str]) -> None:
                                                       FLAGS.host_idx)
                      )
 
+  global job_log_dir # XD
+  job_log_dir = _JOB_LOGDIR.value  # XD
   if FLAGS.exp is not None:
+    _, tpu_type = get_tpu_type(FLAGS.exp)
+    if tpu_type in global_cfg.tputype2zone:
+      def append_zone(gs_path):
+        for bucket_name in ['common_datasets', 'llm_projects']:
+          if bucket_name in gs_path:
+            return gs_path.replace(bucket_name,
+              f'{bucket_name}_{global_cfg.tputype2zone[tpu_type]}')
+        assert False
+      # global_cfg will be used in c4.py
+      global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
+      global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
+      global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
+      job_log_dir = epath.Path(append_zone(str(job_log_dir)))
+
     experiment_config = get_experiment(FLAGS.exp)()
   elif absl_flags.fdl_flags_supplied():
     cfg = absl_flags.create_buildable_from_flags(

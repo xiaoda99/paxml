@@ -175,8 +175,8 @@ def train_and_evaluate(
   ).splitlines():  # pytype: disable=attribute-error
     logging.info('  %s', line)
   logging.info('task_p:')
-  for line in base_hyperparams.nested_struct_to_text(task_p).splitlines():  # pytype: disable=attribute-error
-    logging.info('  %s', line)
+  # for line in base_hyperparams.nested_struct_to_text(task_p).splitlines():  # pytype: disable=attribute-error  # XD
+  #   logging.info('  %s', line)
 
   # Creates the task.
   logging.info('[PAX STATUS]: Creating task')

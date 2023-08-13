@@ -29,7 +29,7 @@ from paxml import seqio_input
 from paxml import tasks_lib
 from paxml import trainer_lib
 from paxml.tasks.lm import model_params
-from paxml.tasks.lm.params import lm_cloud
+# from paxml.tasks.lm.params import lm_cloud  # XD
 from praxis import base_hyperparams
 from praxis import base_input
 from praxis import base_layer
@@ -42,13 +42,14 @@ from praxis.layers import transformers
 import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
+from paxml.tasks.lm.params import global_cfg  # XD
 
 WeightInit = base_layer.WeightInit
 
-GPT_SPM_PATH = (
-    'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
-    # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
-)
+GPT_SPM_PATH = global_cfg.GPT_SPM_PATH #(  XD
+#     'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
+#     # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
+# )
 GPT_EOS_ID = 1
 GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
 PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257)
@@ -61,8 +62,8 @@ C4_GPT_EVAL_FEATURES_LM = {
         vocabulary=PASS_THROUGH_VOCABULARY, add_eos=False
     )
 }
-C4_TRAIN_DATADIR = 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
-C4_EVAL_DATADIR = 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
+C4_TRAIN_DATADIR = global_cfg.C4_TRAIN_DATADIR # XD 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
+C4_EVAL_DATADIR = global_cfg.C4_EVAL_DATADIR # XD 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
 
 # XD
 # import tensorflow as tf
@@ -471,7 +472,7 @@ class TransformerLmSpmdPipelineAdam(
 
 
 @experiment_registry.register
-class LmCloudSpmdAdam(TransformerLmSpmdAdam, lm_cloud.SyntheticDataset):
+class LmCloudSpmdAdam(TransformerLmSpmdAdam): # XD, lm_cloud.SyntheticDataset):
   """Base config for an SPMD model."""
   NUM_LAYERS = 2
   MODEL_DIMS = 2048
@@ -575,10 +576,12 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
   # XD
-  for name in ['num_groups', 'project_logits', 'project_probs', 'logits_residual', 'probs_residual', 
-              'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'probs_squeeze_ratio', 'probs_squeeze_activation_cls',
+  for name in ['num_groups', 'project_logits', 'project_probs', 
+              'logits_residual', 'probs_residual', 
+              'logits_squeeze_ratio', 'logits_squeeze_activation_cls',
+              'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'left_mul',
               'dim_per_head_v', 'value_gate_activation_cls',
-              'float32_logits', 'qk_norm',
+              'float32_logits', 'float32_value', 'qk_norm',
               'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
               ]:
     NAME = name.upper()
@@ -815,18 +818,42 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
 @experiment_registry.register
 class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
   NUM_GROUPS = 1
-  SHARED_QK_DIM = 96  # 0.481
-  SHARED_OV_DIM = 96
+  DIM_PER_SHARED_HEAD = 16
+  FLOAT32_LOGITS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x64(C4SpmdLlamaMediumShareHeads):
+  SHARED_QK_DIM = 1024  # 0.233, float32_logits 0.218, float32_logits v4 0.287 / 0.309 (fix probs fp32->fp16)
+  SHARED_OV_DIM = 1024
+  NUM_SHARED_HEADS = 16
+  DIM_PER_SHARED_HEAD = 64
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x16(C4SpmdLlamaMediumShareHeads):
+  DIMS_PER_HEAD = 48
+  SHARED_QK_DIM = 256  # v4 0.514
+  SHARED_OV_DIM = 256
+  NUM_SHARED_HEADS = 16
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x16NoRot(C4SpmdLlamaMediumShareHeads16x16):
   ROTATE_SHARED_QK = False
 
 @experiment_registry.register
-class C4SpmdLlamaMediumShareHeads16x64(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1
-  SHARED_QK_DIM = 1024  # 0.233, float32_logits 0.218
-  SHARED_OV_DIM = 1024
-  # NUM_SHARED_HEADS = 16
-  DIM_PER_SHARED_HEAD = 64
-  FLOAT32_LOGITS = True
+class C4SpmdLlamaMediumShareHeads128x2(C4SpmdLlamaMediumShareHeads):
+  DIMS_PER_HEAD = 48
+  SHARED_QK_DIM = 256  # 0.321
+  SHARED_OV_DIM = 256
+  NUM_SHARED_HEADS = 128
+  DIM_PER_SHARED_HEAD = 2
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads128x2NoRot(C4SpmdLlamaMediumShareHeads128x2):
+  ROTATE_SHARED_QK = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumShareHeads16x64FP32value(C4SpmdLlamaMediumShareHeads16x64):
+  FLOAT32_VALUE = True  # v4 0.282
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareQK16x64(C4SpmdLlamaMediumShareHeads16x64):
@@ -921,6 +948,10 @@ class C4SpmdLlamaMediumDimPerHead128(C4SpmdLlamaMedium):
   # DIMS_PER_HEAD = 160  # 0.419
 
 @experiment_registry.register
+class C4SpmdLlamaMediumHead16x128(C4SpmdLlamaMedium):
+  DIMS_PER_HEAD = 128   # v4 0.515
+
+@experiment_registry.register
 class C4SpmdLlamaMediumShareQK(C4SpmdLlamaMedium):
   NUM_GROUPS = 1
   SHARED_QK_DIM = 96  # 0.207
@@ -987,9 +1018,13 @@ class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
   PROJECT_PROBS = True
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHLeftMul(C4SpmdLlamaMediumResTH):
+  LEFT_MUL = True  # v4 0.336
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHv4(C4SpmdLlamaMediumResTH):
   PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  #
+  ICI_MESH_SHAPE = [1, 16, 1]  # 0.336
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
@@ -1018,6 +1053,21 @@ class C4SpmdLlamaMediumResTHLogitsGaussian05(C4SpmdLlamaMediumResTHLogits):
 @experiment_registry.register
 class C4SpmdLlamaMediumTHLogits(C4SpmdLlamaMediumResTHLogits):
   LOGITS_RESIDUAL = False  # 0.38
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTH(C4SpmdLlamaMediumResTH):
+  LOGITS_RESIDUAL = False
+  PROBS_RESIDUAL = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHGaussian25(C4SpmdLlamaMediumTH):
+  SCALE_INIT = WeightInit.Gaussian(0.25) # 0.383
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHHEAD64x16Gaussian125(C4SpmdLlamaMediumTH):
+  NUM_HEADS = 64
+  DIMS_PER_HEAD = 16
+  SCALE_INIT = WeightInit.Gaussian(0.125)  # 0.21
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN1GELU(C4SpmdLlamaMediumResTHLogits):

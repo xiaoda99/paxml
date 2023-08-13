@@ -174,6 +174,11 @@ class _InflightQueue:
       while not self._inflight_queue.empty():
         self._inflight_queue.get().block_until_ready()
 
+from paxml.tasks.lm.params import global_cfg  # XD
+def strip_zone(gs_path):  # XD
+  for zone in global_cfg.tputype2zone.values():
+    gs_path = gs_path.replace(f'_{zone}', '')
+  return gs_path
 
 class BaseTrainProgram(Program):
   """A lean interface of a basic train program.
@@ -243,7 +248,8 @@ class BaseTrainProgram(Program):
     # Creates the train summary writer and handler.
     # summary_base_dir = get_summary_base_dir(job_log_dir)
     # summary_train_dir = summary_base_dir / 'train'
-    summary_train_dir = job_log_dir.parent / 'summaries' / 'train' / job_log_dir.name  # XD
+    job_log_parent = epath.Path(strip_zone(str(job_log_dir.parent)))  # XD
+    summary_train_dir = job_log_parent / 'summaries' / 'train' / job_log_dir.name  # XD
     self._train_summary_writer = self._exitstack.enter_context(
         summary_utils.get_summary_writer(summary_train_dir)
     )
@@ -260,7 +266,7 @@ class BaseTrainProgram(Program):
     # Creates the summary writer and handler for eval on train input.
     if not train_p.eval_skip_train:
       # summary_eval_train_dir = summary_base_dir / 'eval_train'
-      summary_eval_train_dir = job_log_dir.parent / 'summaries' / 'eval_train' / job_log_dir.name  # XD
+      summary_eval_train_dir = job_log_parent / 'summaries' / 'eval_train' / job_log_dir.name  # XD
       eval_train_summary_writer = self._exitstack.enter_context(
           summary_utils.get_summary_writer(summary_eval_train_dir)
       )
