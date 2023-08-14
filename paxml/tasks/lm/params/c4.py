@@ -1051,6 +1051,13 @@ class C4SpmdLlamaMediumResTHLogitsGaussian05(C4SpmdLlamaMediumResTHLogits):
   SCALE_INIT = WeightInit.Gaussian(0.05)
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2ProbsFFN2(C4SpmdLlamaMediumResTH):
+  LOGITS_SQUEEZE_RATIO = 2  
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+  PROBS_SQUEEZE_RATIO = 2    # v4
+  PROBS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
 class C4SpmdLlamaMediumTHLogits(C4SpmdLlamaMediumResTHLogits):
   LOGITS_RESIDUAL = False  # 0.38
 
@@ -1062,6 +1069,18 @@ class C4SpmdLlamaMediumTH(C4SpmdLlamaMediumResTH):
 @experiment_registry.register
 class C4SpmdLlamaMediumTHGaussian25(C4SpmdLlamaMediumTH):
   SCALE_INIT = WeightInit.Gaussian(0.25) # 0.383
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHLogitsFFNProbs(C4SpmdLlamaMediumTH):
+  LOGITS_SQUEEZE_RATIO = 2   # v4 0.47
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumTHLogitsFFNProbsFFN(C4SpmdLlamaMediumTH):
+  LOGITS_SQUEEZE_RATIO = 2  
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+  PROBS_SQUEEZE_RATIO = 2    # v4 0.437
+  PROBS_SQUEEZE_ACTIVATION_CLS = layers.GELU
 
 @experiment_registry.register
 class C4SpmdLlamaMediumTHHEAD64x16Gaussian125(C4SpmdLlamaMediumTH):
