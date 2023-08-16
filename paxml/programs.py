@@ -462,7 +462,7 @@ class BaseTrainProgram(Program):
     steps_per_sec = self._steps_per_sec(
         step, self._train_summary_last_time, self._train_summary_last_step
     )
-    logging.info('steps/sec: %f', steps_per_sec)
+    # logging.info('steps/sec: %f', steps_per_sec)  # XD remove
     self._train_summary_last_time = time.time()
     self._train_summary_last_step = step
 

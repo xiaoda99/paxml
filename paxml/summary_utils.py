@@ -337,7 +337,7 @@ def write_summary_tensor(
     # Force DeviceArray to NumPy array conversion before taking the mean.
     np_tensors = [np.array(t) for t in tensors_it]
     tensor = np.mean(np_tensors).item()
-    logging.info('summary tensor at step=%s %s %s', step_i, key, tensor)
+    # logging.info('summary tensor at step=%s %s %s', step_i, key, tensor)  # XD remove
     tf_summary.scalar(key, tensor, step_i)
   elif base_summary_type == SummaryType.IMAGE:
     remaining_max_images = MAX_IMAGES_PER_SUMMARY
@@ -424,8 +424,8 @@ def write_summary_entry(summary_writer: SummaryWriter,
       status_msg += f', steps/sec {steps_per_sec}'
       write_summary_tensor(step_i, 'Steps/sec', steps_per_sec,
                            SummaryType.AGGREGATE_SCALAR)
-    logging.info('Metrics values at step %d:', step_i)
-    logging.info('  loss=%f', mean_loss)
+    # logging.info('Metrics values at step %d:', step_i)  # XD remove
+    # logging.info('  loss=%f', mean_loss)  # XD remove
     for key, value_lst in weighted_scalars_list.items():
       sum_metric_weights = 0.
       weighted_sum_metric_values = 0.
@@ -454,8 +454,8 @@ def write_summary_entry(summary_writer: SummaryWriter,
 
   # Lastly flush summaries.
   summary_writer.flush()
-  logging.info('Wrote summary entry at step `%d` (loss=`%f`).', step_i,
-               mean_loss)
+  # logging.info('Wrote summary entry at step `%d` (loss=`%f`).', step_i,
+  #              mean_loss)  # XD remove
 
 
 def write_model_structure(
