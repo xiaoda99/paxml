@@ -353,7 +353,8 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
       raise ValueError('`structure` not supported for Flax format checkpoints.')
     return super().structure()
 
-
+import numpy as np  # XD
+from tensorflow.python.lib.io import file_io  # XD
 class OrbaxCheckpointManager:
   """Wrapper class for overridden _CheckpointManagerImpl."""
 
@@ -435,7 +436,16 @@ class OrbaxCheckpointManager:
           saving/restoring, to avoid potential silent bugs when loading
           checkpoints to incompatible unpadded shapes of TrainState."""
       )
-
+    # XD
+    if jax.process_index() == 0 and step in [0] + np.logspace(1, 16, num=16, base=2).astype(np.int32).tolist():
+      sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
+      for module_name in ['pre_proj', 'post_proj']:
+        for param_name in ['w', 'w1', 'w2', 'b']:
+          if module_name in sa and param_name in sa[module_name]:
+            param = sa[module_name][param_name]
+            gs_path = self.directory / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
+            logging.warning('Saving params to %s', str(gs_path))
+            np.save(file_io.FileIO(gs_path, 'w'), param)
     # save_kwargs
     save_kwargs = _update_args_with_version(None, self.version)
 

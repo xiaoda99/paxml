@@ -577,11 +577,11 @@ def configure_gpt3_task(
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
   # XD
   for name in ['num_groups', 'project_logits', 'project_probs', 
-              'logits_residual', 'probs_residual', 
-              'logits_squeeze_ratio', 'logits_squeeze_activation_cls',
-              'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'left_mul',
+              'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
+              'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
+              'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
               'dim_per_head_v', 'value_gate_activation_cls',
-              'float32_logits', 'float32_value', 'qk_norm',
+              'float32_logits', 'float32_probs', 'float32_value', 'qk_norm',
               'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
               ]:
     NAME = name.upper()
@@ -816,6 +816,24 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   # ICI_MESH_SHAPE = [32, 1, 1]
 
 @experiment_registry.register
+class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
+  NUM_LAYERS = 28
+  MODEL_DIMS = 2048
+  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 64
+  # NUM_GROUPS = 1  # XD
+  COMBINE_QKV = False
+  
+  # LEARNING_RATE = 6e-5
+  LR_COS_WARMUP = 256   # XD
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 65536
+
+  PERCORE_BATCH_SIZE = 16
+  ICI_MESH_SHAPE = [1, 64, 1]
+
+@experiment_registry.register
 class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
   NUM_GROUPS = 1
   DIM_PER_SHARED_HEAD = 16
@@ -1013,9 +1031,29 @@ class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.37, res 0.208/0.211
+  NUM_GROUPS = 1  # 0.37, res 0.208/0.211 
   PROJECT_LOGITS = True
   PROJECT_PROBS = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
+  NUM_GROUPS = 1  #
+  PROJECT_LOGITS = True
+  PROJECT_PROBS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHAbsorbRes(C4SpmdLlamaMediumResTH):
+  ABSORB_RESIDUAL = True  # 0.355 v4 0.449, v5 0.298~0.376?! very unstable
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFP32logitsprobs(C4SpmdLlamaMediumResTH):
+  FLOAT32_LOGITS = True
+  FLOAT32_PROBS = True  # 0.152
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHAbsorbResFP32logitsprobs(C4SpmdLlamaMediumResTHAbsorbRes):
+  FLOAT32_LOGITS = True
+  FLOAT32_PROBS = True  # 0.343
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLeftMul(C4SpmdLlamaMediumResTH):
@@ -1030,6 +1068,24 @@ class C4SpmdLlamaMediumResTHv4(C4SpmdLlamaMediumResTH):
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
   LOGITS_SQUEEZE_RATIO = 2  
   LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUProbs(C4SpmdLlamaXLResTH):
+  LOGITS_SQUEEZE_RATIO = 2   # v4 0.112 v4 absorbres 0.115
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+  PROBS_ABSORB_RESIDUAL = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLTHLogitsFFN2GELUResProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProbs):
+  LOGITS_RESIDUAL = False   # v4 0.154
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsBS1(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
+  PERCORE_BATCH_SIZE = 1
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsReLU(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU  # 0.311
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsv4(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):

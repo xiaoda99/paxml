@@ -265,7 +265,7 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
     global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
     global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
     global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
-  if tpu_type == 'v4':
+  if tpu_type in ['v4', 'v5']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:
       return adjust_config_by_tpu(experiment_class, tpu_type)
