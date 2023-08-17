@@ -830,7 +830,7 @@ class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 65536
 
-  PERCORE_BATCH_SIZE = 16
+  PERCORE_BATCH_SIZE = 16  # 0.168, v4 0.189!?
   ICI_MESH_SHAPE = [1, 64, 1]
 
 @experiment_registry.register
@@ -1036,11 +1036,27 @@ class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
   PROJECT_PROBS = True
 
 @experiment_registry.register
+class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
+  NUM_HEADS = 16  # 0.20
+  DIMS_PER_HEAD = 128
+
+@experiment_registry.register
+class C4SpmdLlamaXLFP32logits(C4SpmdLlamaXL):
+  FLOAT32_LOGITS = True  # 0.155
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
-  NUM_GROUPS = 1  #
+  NUM_GROUPS = 1  #  v4 0.150
   PROJECT_LOGITS = True
   PROJECT_PROBS = True
+  LOGITS_ABSORB_RESIDUAL = True
+  PROBS_ABSORB_RESIDUAL = True
 
+@experiment_registry.register
+class C4SpmdLlamaXLHead16x128ResTH(C4SpmdLlamaXLResTH):
+  NUM_HEADS = 16
+  DIMS_PER_HEAD = 128
+  
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHAbsorbRes(C4SpmdLlamaMediumResTH):
   ABSORB_RESIDUAL = True  # 0.355 v4 0.449, v5 0.298~0.376?! very unstable
@@ -1073,11 +1089,16 @@ class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
 class C4SpmdLlamaXLResTHLogitsFFN2GELUProbs(C4SpmdLlamaXLResTH):
   LOGITS_SQUEEZE_RATIO = 2   # v4 0.112 v4 absorbres 0.115
   LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
-  PROBS_ABSORB_RESIDUAL = True
+  LOGITS_ABSORB_RESIDUAL = False
 
 @experiment_registry.register
 class C4SpmdLlamaXLTHLogitsFFN2GELUResProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProbs):
   LOGITS_RESIDUAL = False   # v4 0.154
+
+@experiment_registry.register
+class C4SpmdLlamaXLHead16x128THLogitsFFN2GELUResProbs(C4SpmdLlamaXLTHLogitsFFN2GELUResProbs):
+  NUM_HEADS = 16
+  DIMS_PER_HEAD = 128
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbsBS1(C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs):
