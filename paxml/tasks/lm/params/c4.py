@@ -1097,7 +1097,7 @@ class C4SpmdLlamaXLTHLogitsFFN2GELUResProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProb
 
 @experiment_registry.register
 class C4SpmdLlamaXLHead16x128THLogitsFFN2GELUResProbs(C4SpmdLlamaXLTHLogitsFFN2GELUResProbs):
-  NUM_HEADS = 16
+  NUM_HEADS = 16  # 0.189
   DIMS_PER_HEAD = 128
 
 @experiment_registry.register

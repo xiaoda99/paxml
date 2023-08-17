@@ -437,7 +437,8 @@ class OrbaxCheckpointManager:
           checkpoints to incompatible unpadded shapes of TrainState."""
       )
     # XD
-    if jax.process_index() == 0 and step in [0] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
+    # [0, 200, 400, 800, 1600, 3200, 6400, 12800, *19200*, 25600, *38400*, 51200]
+    if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
       sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
       for module_name in ['pre_proj', 'post_proj']:
         for param_name in ['w', 'w1', 'w2', 'b']:
