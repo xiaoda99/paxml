@@ -6,3 +6,8 @@ GPT_SPM_PATH = (
 )
 C4_TRAIN_DATADIR = 'gs://common_datasets'  # XD: 'gs://mlperf-llm-public2'
 C4_EVAL_DATADIR = 'gs://common_datasets' # XD: 'gs://mlperf-llm-public2'
+
+def strip_zone(gs_path):  # XD
+  for zone in tputype2zone.values():
+    gs_path = gs_path.replace(f'_{zone}', '')
+  return gs_path

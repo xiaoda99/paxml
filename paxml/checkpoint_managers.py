@@ -355,6 +355,7 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
 
 import numpy as np  # XD
 from tensorflow.python.lib.io import file_io  # XD
+from paxml.tasks.lm.params import global_cfg  # XD
 class OrbaxCheckpointManager:
   """Wrapper class for overridden _CheckpointManagerImpl."""
 
@@ -444,7 +445,11 @@ class OrbaxCheckpointManager:
         for param_name in ['w', 'w1', 'w2', 'b']:
           if module_name in sa and param_name in sa[module_name]:
             param = sa[module_name][param_name]
-            gs_path = self.directory / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
+            # gs_path = self.directory.parent / 'params' / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
+            parent = self.directory.parent  # llm_projects_zone/log/exp
+            exp = parent.name
+            parent = epath.Path(global_cfg.strip_zone(str(parent.parent)))  # llm_projects_zone/log->llm_projects/log
+            gs_path = parent / 'params' / exp / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
             logging.warning('Saving params to %s', str(gs_path))
             np.save(file_io.FileIO(gs_path, 'w'), param)
     # save_kwargs

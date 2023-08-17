@@ -1046,7 +1046,7 @@ class C4SpmdLlamaXLFP32logits(C4SpmdLlamaXL):
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
-  NUM_GROUPS = 1  #  v4 0.150
+  NUM_GROUPS = 1  #  v4 absorbres 0.150  v4 no_absorbres 0.117
   PROJECT_LOGITS = True
   PROJECT_PROBS = True
   LOGITS_ABSORB_RESIDUAL = True
@@ -1054,7 +1054,7 @@ class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
 
 @experiment_registry.register
 class C4SpmdLlamaXLHead16x128ResTH(C4SpmdLlamaXLResTH):
-  NUM_HEADS = 16
+  NUM_HEADS = 16  # v4 0.186
   DIMS_PER_HEAD = 128
   
 @experiment_registry.register
