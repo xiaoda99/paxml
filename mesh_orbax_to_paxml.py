@@ -21,13 +21,11 @@ sys.path.append('/home/lishengping/projects/paxml/paxml')
 
 from paxml.main import get_experiment
 
-
-try:
-    jax.distributed.initialize()
-except Exception as error:
-    print(f'Error: {error}')
-    assert jax.local_device_count() == 8
-    
+# try:
+#     jax.distributed.initialize()
+# except Exception as error:
+#     print(f'Error: {error}')
+#     assert jax.local_device_count() == 8    
 
 TrainState = train_states.TrainState
 instantiate = base_hyperparams.instantiate
@@ -37,11 +35,6 @@ PaxCheckpointHandler = checkpoints.PaxCheckpointHandler
 NestedMap = py_utils.NestedMap
 checkpoint_type = CheckpointType.GDA
 SAVE_INTERVAL_STEPS = 1
-
-exp = 'C4SpmdLlamaMediumResTHv4'
-experiment_config = get_experiment(f'tasks.lm.params.c4.{exp}')()
-task_p = experiment_config.task()
-jax_task = instantiate(task_p)
 
 options = checkpoint_managers.CheckpointManagerOptions(
       max_to_keep=10,
@@ -54,8 +47,15 @@ checkpointer = Checkpointer(
               use_ocdbt=False,
           )
       )
-job_log_dir = epath.Path(f'gs://llm_projects/log/{exp}_skip/checkpoints')
-step = 44000
+
+exp = 'C4SpmdLlamaMediumSkipRmsNormWD'
+experiment_config = get_experiment(f'tasks.lm.params.c4.{exp}')()
+with jax.default_device(jax.devices("cpu")[0]):
+    task_p = experiment_config.task()
+    jax_task = instantiate(task_p)
+
+
+job_log_dir = epath.Path(f'gs://llm_projects/log/{exp}DecoupledWD/checkpoints')
 # job_log_dir = epath.Path('gs://llm_base_models/baichuan-7B-easylm')
 checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       job_log_dir,
@@ -65,6 +65,8 @@ checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       checkpoint_type=checkpoint_type,
       tensorstore_use_ocdbt=False,
   )
+
+step = 44000
 
 start = time.time()
 print(f'Start load pretrained model params....')

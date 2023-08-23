@@ -273,7 +273,7 @@ def set_adam_and_learning_rate_schedule(
       optimizers.Adam,
       beta1=cls.ADAM_BETA1 if cls.ADAM_BETA1 else 0.9,
       beta2=cls.ADAM_BETA2 if cls.ADAM_BETA2 else 0.999,
-      weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
+      decoupled_weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,  # XD: add decoupled_
       epsilon=cls.ADAM_EPSILON if cls.ADAM_EPSILON else 1e-6,
       epsilon_root=cls.ADAM_EPSILON_ROOT if cls.ADAM_EPSILON_ROOT else 0.0,
       clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE
@@ -565,10 +565,10 @@ def configure_gpt3_task(
   transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
   model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  if False and cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
-    transformer_layer_p.ln_tpl.intermediate_dtype = jnp.float32
-    transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = jnp.float32
-    model_p.lm_tpl.final_ln_tpl.intermediate_dtype = jnp.float32
+  if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
+    transformer_layer_p.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+    model_p.lm_tpl.final_ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
   if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
     transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
     transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
@@ -587,6 +587,13 @@ def configure_gpt3_task(
     NAME = name.upper()
     if hasattr(cls, NAME):
       setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
+
+  for name in ['use_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
+      'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate',
+      'dynamic_w_init', 'src_dependent']:
+    NAME = name.upper()
+    if hasattr(cls, NAME):
+      setattr(transformer_layer_p.tr_atten_tpl.cross_head_proj_tpl, name, getattr(cls, NAME))
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -734,6 +741,7 @@ class C4SpmdGpt3SmallRoPE(C4SpmdGpt3AdamOrgHP):  # XD
   DIMS_PER_HEAD = None
   USE_BIAS = False # XD add
   NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
+  SKIP_RMSNORM_WD = True
   LEARNING_RATE = 2e-4  # XD
   PERCORE_BATCH_SIZE = 4
   FPROP_DTYPE = jnp.bfloat16
@@ -814,6 +822,18 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   PERCORE_BATCH_SIZE = 16
   ICI_MESH_SHAPE = [1, 32, 1]  # 0.549， combine_qkv 0.493???!!!, v5 0.436???
   # ICI_MESH_SHAPE = [32, 1, 1]
+
+@experiment_registry.register
+class C4SpmdLlamaMediumSkipRmsNormWD(C4SpmdLlamaMedium):
+  SKIP_RMSNORM_WD = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumWD01(C4SpmdLlamaMedium):
+  WEIGHT_DECAY = 0.01
+
+@experiment_registry.register
+class C4SpmdLlamaMediumNoWD(C4SpmdLlamaMedium):
+  WEIGHT_DECAY = None
 
 @experiment_registry.register
 class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
@@ -970,6 +990,11 @@ class C4SpmdLlamaMediumHead16x128(C4SpmdLlamaMedium):
   DIMS_PER_HEAD = 128   # v4 0.515
 
 @experiment_registry.register
+class C4SpmdLlamaMediumHead8x128(C4SpmdLlamaMedium):
+  NUM_HEADS = 8  # 0.666
+  DIMS_PER_HEAD = 128
+
+@experiment_registry.register
 class C4SpmdLlamaMediumShareQK(C4SpmdLlamaMedium):
   NUM_GROUPS = 1
   SHARED_QK_DIM = 96  # 0.207
@@ -1031,9 +1056,11 @@ class C4SpmdLlamaMediumGA256x8v4(C4SpmdLlamaMediumGA256x8):
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
-  NUM_GROUPS = 1  # 0.37, res 0.208/0.211 
+  NUM_GROUPS = 1  # 0.37, res 0.208/0.211, v4 0.336, all no_absorbres
   PROJECT_LOGITS = True
   PROJECT_PROBS = True
+  LOGITS_ABSORB_RESIDUAL = True
+  PROBS_ABSORB_RESIDUAL = True
 
 @experiment_registry.register
 class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
@@ -1053,10 +1080,19 @@ class C4SpmdLlamaXLResTH(C4SpmdLlamaXL):
   PROBS_ABSORB_RESIDUAL = True
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHGaussian04(C4SpmdLlamaXLResTH):
+  SCALE_INIT = WeightInit.Gaussian(0.04)
+
+@experiment_registry.register
 class C4SpmdLlamaXLHead16x128ResTH(C4SpmdLlamaXLResTH):
   NUM_HEADS = 16  # v4 0.186
   DIMS_PER_HEAD = 128
   
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLearnDiag(C4SpmdLlamaMediumResTH):
+  LEARNABLE_DIAG = True  # v4 0.503! vs C4SpmdLlamaMediumResTHAbsorbRes
+  SCALE_INIT = WeightInit.Gaussian(0.04)
+
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHAbsorbRes(C4SpmdLlamaMediumResTH):
   ABSORB_RESIDUAL = True  # 0.355 v4 0.449, v5 0.298~0.376?! very unstable
@@ -1076,9 +1112,87 @@ class C4SpmdLlamaMediumResTHLeftMul(C4SpmdLlamaMediumResTH):
   LEFT_MUL = True  # v4 0.336
 
 @experiment_registry.register
-class C4SpmdLlamaMediumResTHv4(C4SpmdLlamaMediumResTH):
-  PERCORE_BATCH_SIZE = 32
-  ICI_MESH_SHAPE = [1, 16, 1]  # 0.336
+class C4SpmdLlamaMediumResTHFFN4(C4SpmdLlamaMediumResTH):
+  LOGITS_SQUEEZE_RATIO = 4  # v4 0.32
+  PROBS_SQUEEZE_RATIO = 4
+  USE_BIAS = False
+  LOGITS_ABSORB_RESIDUAL = False
+  PROBS_ABSORB_RESIDUAL = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN8SkipWD(C4SpmdLlamaMediumResTHFFN4):
+  LOGITS_SQUEEZE_RATIO = 8  # v4 0.33
+  PROBS_SQUEEZE_RATIO = 8
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16SkipWD(C4SpmdLlamaMediumResTHFFN4):
+  LOGITS_SQUEEZE_RATIO = 16  # v4 0.48
+  PROBS_SQUEEZE_RATIO = 16
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16LogitsGELU(C4SpmdLlamaMediumResTHFFN16SkipWD):
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+  USE_BIAS = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16GELU(C4SpmdLlamaMediumResTHFFN16LogitsGELU):
+  PROBS_SQUEEZE_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN4LearnDiag(C4SpmdLlamaMediumResTHFFN4):
+  LEARNABLE_DIAG = True
+  TRANSPOSE = True  # 0.307
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN4DynGate(C4SpmdLlamaMediumResTHFFN4):
+  DYNAMIC_SQUEEZE_GATE_ACT_CLS = layers.SiLU  # v4 0.317 transpose==no_transpose
+  GATE_RELATIVE_SCALE = 0.01
+  TRANSPOSE = True
+  SKIP_FFN_WEIGHT_DECAY = True
+  
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN4DynGateSigmoid(C4SpmdLlamaMediumResTHFFN4DynGate):
+  DYNAMIC_SQUEEZE_GATE_ACT_CLS = layers.Sigmoid  # v4 0.317
+  GATE_RELATIVE_SCALE = 0.05
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN4DynAddGate(C4SpmdLlamaMediumResTHFFN4DynGate):
+  ADDICTIVE_GATE = True  # v4 0.316
+  GATE_RELATIVE_SCALE = 0.0002
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN4DynW006(C4SpmdLlamaMediumResTHFFN4):  # to delete
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.006)  # v4 0.194
+  TRANSPOSE = True
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW006(C4SpmdLlamaMediumResTHFFN16SkipWD):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.006)  # v4 0.314
+  TRANSPOSE = True
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0006(C4SpmdLlamaMediumResTHFFN16DynW006):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0006)
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003(C4SpmdLlamaMediumResTHFFN16DynW006):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0001(C4SpmdLlamaMediumResTHFFN16DynW006):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0001)
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003SrcInd(C4SpmdLlamaMediumResTHFFN16DynW0003):
+  SRC_DEPENDENT = False # v4 0.394
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag(C4SpmdLlamaMediumResTHFFN16DynW0003):
+  LEARNABLE_DIAG = True # v4 0.308
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
@@ -1231,15 +1345,6 @@ class C4SpmdLlamaMediumResTHFP32logits(C4SpmdLlamaMediumResTH):
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHGaussian05(C4SpmdLlamaMediumResTH):
   SCALE_INIT = WeightInit.Gaussian(0.05)
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFFN4(C4SpmdLlamaMediumResTH):
-  SQUEEZE_RATIO = 4  # res 0.173
-
-@experiment_registry.register
-class C4SpmdLlamaMediumResTHFFN4GELU(C4SpmdLlamaMediumResTH):
-  SQUEEZE_RATIO = 4  # res 0.173
-  SQUEEZE_ACTIVATION_CLS = layers.GELU
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHx2(C4SpmdLlamaMediumResTH):

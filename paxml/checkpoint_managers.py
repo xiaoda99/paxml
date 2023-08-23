@@ -442,9 +442,10 @@ class OrbaxCheckpointManager:
     if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
       sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
       for module_name in ['pre_proj', 'post_proj']:
-        for param_name in ['w', 'w1', 'w2', 'b']:
+        for param_name in ['w', 'w1', 'w2', 'b', 'd', 'dw', 'dd']:
           if module_name in sa and param_name in sa[module_name]:
             param = sa[module_name][param_name]
+            # save to this location will be deleted mysteriously when restarting from preemption
             # gs_path = self.directory.parent / 'params' / f'params_{str(step).zfill(8)}' / f'{module_name}.{param_name}.npy'
             parent = self.directory.parent  # llm_projects_zone/log/exp
             exp = parent.name
