@@ -38,6 +38,7 @@ from praxis import optimizers
 from praxis import pax_fiddle
 from praxis import schedules
 from praxis.layers import normalizations  # XD
+from praxis.layers import activations  # XD
 from praxis.layers import transformers
 import seqio
 import t5.data
@@ -588,9 +589,9 @@ def configure_gpt3_task(
     if hasattr(cls, NAME):
       setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
-  for name in ['use_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
+  for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
       'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate',
-      'dynamic_w_init', 'src_dependent']:
+      'dynamic_w_init', 'src_dependent', 'tgt_dependent', 'dw_activation_cls', 'use_static_w']:
     NAME = name.upper()
     if hasattr(cls, NAME):
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_proj_tpl, name, getattr(cls, NAME))
@@ -824,6 +825,16 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   # ICI_MESH_SHAPE = [32, 1, 1]
 
 @experiment_registry.register
+class C4SpmdLlamaMediumSeqLen512(C4SpmdLlamaMedium):
+  MAX_SEQ_LEN = 512
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class C4SpmdLlamaMediumSeqLen2K(C4SpmdLlamaMedium):
+  MAX_SEQ_LEN = 2048
+  PERCORE_BATCH_SIZE = 8
+
+@experiment_registry.register
 class C4SpmdLlamaMediumSkipRmsNormWD(C4SpmdLlamaMedium):
   SKIP_RMSNORM_WD = True
 
@@ -836,13 +847,24 @@ class C4SpmdLlamaMediumNoWD(C4SpmdLlamaMedium):
   WEIGHT_DECAY = None
 
 @experiment_registry.register
+class C4SpmdLlamaLarge(C4SpmdGpt3SmallRoPE):
+  NUM_LAYERS = 24
+  MODEL_DIMS = 1536
+  HIDDEN_DIMS = 4096  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 12
+  DIMS_PER_HEAD = 128
+  COMBINE_QKV = False
+
+  PERCORE_BATCH_SIZE = 16  # 0.299
+  ICI_MESH_SHAPE = [1, 32, 1]
+
+@experiment_registry.register
 class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
   NUM_LAYERS = 28
   MODEL_DIMS = 2048
   HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 64
-  # NUM_GROUPS = 1  # XD
   COMBINE_QKV = False
   
   # LEARNING_RATE = 6e-5
@@ -852,6 +874,14 @@ class C4SpmdLlamaXL(C4SpmdGpt3SmallRoPE):
 
   PERCORE_BATCH_SIZE = 16  # 0.168, v4 0.189!?
   ICI_MESH_SHAPE = [1, 64, 1]
+
+@experiment_registry.register
+class C4SpmdLlamaXXL(C4SpmdLlamaXL):
+  NUM_LAYERS = 26  # v4 0.139
+  MODEL_DIMS = 3072
+  HIDDEN_DIMS = 8192  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 24
+  DIMS_PER_HEAD = 128
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
@@ -1087,7 +1117,97 @@ class C4SpmdLlamaXLResTHGaussian04(C4SpmdLlamaXLResTH):
 class C4SpmdLlamaXLHead16x128ResTH(C4SpmdLlamaXLResTH):
   NUM_HEADS = 16  # v4 0.186
   DIMS_PER_HEAD = 128
-  
+
+@experiment_registry.register
+class C4SpmdLlamaXLHeadResTHFFN16(C4SpmdLlamaXLHead16x128ResTH):
+  LOGITS_SQUEEZE_RATIO = 16  # v4 0.187
+  PROBS_SQUEEZE_RATIO = 16
+  USE_BIAS = False
+  LOGITS_ABSORB_RESIDUAL = False
+  PROBS_ABSORB_RESIDUAL = False
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16(C4SpmdLlamaXLHeadResTHFFN16):
+  USE_BIAS = False  # fix init_fn bug. fix class name bug by the way
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN4(C4SpmdLlamaXLResTHFFN16):
+  LOGITS_SQUEEZE_RATIO = 4  # v4 0.156
+  PROBS_SQUEEZE_RATIO = 4
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN4LogitsGELU(C4SpmdLlamaXLResTHFFN4):
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU  # v4 0.155
+  USE_BIAS = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN4DynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHFFN4LogitsGELU):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)  # 0.117
+  TRANSPOSE = True
+  LEARNABLE_DIAG = True
+  DW_ACTIVATION_CLS = layers.Tanh
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+
+@experiment_registry.register
+class C4SpmdLlamaXLHeadResTHFFN16DynW0003(C4SpmdLlamaXLHeadResTHFFN16):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)
+  TRANSPOSE = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLHeadResTHFFN16DynW0003DWTanh(C4SpmdLlamaXLHeadResTHFFN16DynW0003):
+  DW_ACTIVATION_CLS = layers.Tanh  # v4 0.136??? vs C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16DynW0003DWTanh(C4SpmdLlamaXLHeadResTHFFN16DynW0003DWTanh):
+  DW_ACTIVATION_CLS = layers.Tanh # fix init_fn bug. fix class name bug by the way
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh_test(C4SpmdLlamaXLHeadResTHFFN16DynW0003DWTanh):
+  LEARNABLE_DIAG = True  # v4 0.142 to compare with C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh
+
+@experiment_registry.register
+class C4SpmdLlamaXLHeadResTHFFN16DynW0003LearnDiag(C4SpmdLlamaXLHeadResTHFFN16DynW0003):
+  LEARNABLE_DIAG = True # v4 0.151
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh(C4SpmdLlamaXLHeadResTHFFN16DynW0003LearnDiag):
+  DW_ACTIVATION_CLS = layers.Tanh  # v4 0.142
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWClip(C4SpmdLlamaXLHeadResTHFFN16DynW0003LearnDiag):
+  DW_ACTIVATION_CLS = activations.Clip  # v4 0.142
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16DynW0003OnlyLearnDiagDWTanh(C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh):
+  TGT_DEPENDENT = False  # v4 0.158
+  SRC_DEPENDENT = False
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN16OnlyDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHFFN16DynW0003LearnDiagDWTanh):
+  USE_STATIC_W = False  # v4 0.14
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN4OnlyDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHFFN16OnlyDynW0003LearnDiagDWTanh):
+  LOGITS_SQUEEZE_RATIO = 4  # v4 0.140
+  PROBS_SQUEEZE_RATIO = 4
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHFFN4LogitsGELUOnlyDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHFFN4OnlyDynW0003LearnDiagDWTanh):
+  LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU  # v4 0.140
+  # USE_BIAS = True
+  USE_SQUEEZE_BIAS = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLHead32x64ResTHFFN32DynW0003LearnDiag(C4SpmdLlamaXLHeadResTHFFN16DynW0003LearnDiag):
+  NUM_HEADS = 32  # v4 0.093
+  DIMS_PER_HEAD = 64
+  LOGITS_SQUEEZE_RATIO = 32
+  PROBS_SQUEEZE_RATIO = 32
+
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLearnDiag(C4SpmdLlamaMediumResTH):
   LEARNABLE_DIAG = True  # v4 0.503! vs C4SpmdLlamaMediumResTHAbsorbRes
@@ -1195,6 +1315,72 @@ class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag(C4SpmdLlamaMediumResTHFFN16Dy
   LEARNABLE_DIAG = True # v4 0.308
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagSeqLen512(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
+  MAX_SEQ_LEN = 512
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagSeqLen2K(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
+  MAX_SEQ_LEN = 2048
+  PERCORE_BATCH_SIZE = 8
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003OnlyLearnDiagDWTanh(C4SpmdLlamaMediumResTHFFN16DynW0003):
+  DW_ACTIVATION_CLS = layers.Tanh
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+  USE_STATIC_W = False
+  LEARNABLE_DIAG = True  # v3 0.364
+  TGT_DEPENDENT = False
+  SRC_DEPENDENT = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003(C4SpmdLlamaMediumResTHFFN16DynW0003):
+  USE_STATIC_W = False  # 0.401!? much faster than C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiag
+  
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiag(C4SpmdLlamaMediumResTHFFN16DynW0003):
+  USE_STATIC_W = False
+  LEARNABLE_DIAG = True  # v4 0.320
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiagDWTanh(C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiag):
+  DW_ACTIVATION_CLS = layers.Tanh  # v4 0.267??? vs C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiag
+  PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+
+@experiment_registry.register
+class C4SpmdLlamaMediumHead32x32ResTHFFN32(C4SpmdLlamaMediumResTH):
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 32
+  LOGITS_SQUEEZE_RATIO = 32  #
+  PROBS_SQUEEZE_RATIO = 32
+  USE_BIAS = False
+  LOGITS_ABSORB_RESIDUAL = False
+  PROBS_ABSORB_RESIDUAL = False
+  SKIP_FFN_WEIGHT_DECAY = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumHead8x128ResTHFFN8(C4SpmdLlamaMediumHead32x32ResTHFFN32):
+  NUM_HEADS = 8
+  DIMS_PER_HEAD = 128
+  LOGITS_SQUEEZE_RATIO = 8  #
+  PROBS_SQUEEZE_RATIO = 8
+
+@experiment_registry.register
+class C4SpmdLlamaMediumHead32x32ResTHFFN32DynW0003(C4SpmdLlamaMediumHead32x32ResTHFFN32):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)  # v4 0.19
+  TRANSPOSE = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumHead8x128ResTHFFN8DynW0006(C4SpmdLlamaMediumHead8x128ResTHFFN8):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0006)  # v4 0.465
+  TRANSPOSE = True
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN8DynW0003(C4SpmdLlamaMediumResTHFFN8SkipWD):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)  # v4 0.207
+  TRANSPOSE = True
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUProbs(C4SpmdLlamaMediumResTH):
   LOGITS_SQUEEZE_RATIO = 2  
   LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
@@ -1204,6 +1390,16 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUProbs(C4SpmdLlamaXLResTH):
   LOGITS_SQUEEZE_RATIO = 2   # v4 0.112 v4 absorbres 0.115
   LOGITS_SQUEEZE_ACTIVATION_CLS = layers.GELU
   LOGITS_ABSORB_RESIDUAL = False
+
+@experiment_registry.register
+class C4SpmdLlamaXLHead16x128ResTHLogitsFFN2GELUProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProbs):
+  NUM_HEADS = 16  # v4 0.159
+  DIMS_PER_HEAD = 128
+  RELATIVE_SCALE = 1.0  # init_fn has bug. Intended scale is 0.1, but the actual scale is 1.0
+
+@experiment_registry.register
+class C4SpmdLlamaXLHead16x128ResTHLogitsFFN2GELUProbsRelScale025(C4SpmdLlamaXLHead16x128ResTHLogitsFFN2GELUProbs):
+  RELATIVE_SCALE = 0.025
 
 @experiment_registry.register
 class C4SpmdLlamaXLTHLogitsFFN2GELUResProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUProbs):
