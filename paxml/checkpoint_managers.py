@@ -282,7 +282,8 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     # if preemption had not happened.
     return last_checkpoint_step is None or (
         last_checkpoint_step < step
-        and step % self._options.save_interval_steps == 0
+        and (step % self._options.save_interval_steps == 0
+            or step in self._options.save_on_steps)  # # XD: copied from orbax/checkpoint/checkpoint_manager.py:362
     )
 
   def delete(self, step: int):
@@ -292,6 +293,91 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
           'Checkpoints with digit step subdirectories do not support deletions.'
       )
     super().delete(step)
+
+  def _remove_old_checkpoints(self):  # XD: copied from orbax/checkpoint/checkpoint_manager.py:795 (CheckpointManager)
+    """Keeps the `max_to_keep` most recent checkpoint steps."""
+    # Must have set max_to_keep in order to remove any checkpoints.
+    if self._options.max_to_keep is None:
+      return
+    # Not enough checkpoints accumulated to consider deletion.
+    if len(self._checkpoints) <= self._options.max_to_keep:
+      return
+    if self._track_best:
+      # Best steps (to keep) are at the end, after sorting.
+      (
+          checkpoints_without_metrics,
+          sorted_checkpoints,
+      ) = self._sort_checkpoints_by_metrics(self._checkpoints)
+    else:
+      # checkpoints already sorted by ascending step
+      checkpoints_without_metrics = []
+      sorted_checkpoints = self._checkpoints
+
+    keep = int(self._options.max_to_keep)
+    if self._options.keep_checkpoints_without_metrics:
+      maybe_delete = (
+          sorted_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      )
+      active_checkpoints = (
+          checkpoints_without_metrics + sorted_checkpoints[-keep:]
+          if keep > 0
+          else []
+      )
+    else:
+      all_checkpoints = checkpoints_without_metrics + sorted_checkpoints
+      maybe_delete = all_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      active_checkpoints = all_checkpoints[-keep:] if keep > 0 else []
+    maybe_delete = [info for info in maybe_delete if info.step not in self._options.save_on_steps]  # XD
+
+    kept_checkpoints = []
+    for info in maybe_delete:
+      if utils.is_locked(self.directory, info.step):
+        logging.info(
+            'Preserving %s: (Reason: checkpoint is locked).',
+            info,
+        )
+      if (
+          self._options.keep_time_interval is not None
+          and self._interval_preserved_checkpoints
+      ):
+        if info in self._interval_preserved_checkpoints:
+          logging.info(
+              'Preserving %s: (Reason: older falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.append(info)
+          continue
+        elif (
+            info.time
+            >= self._interval_preserved_checkpoints[-1].time
+            + self._options.keep_time_interval
+        ):
+          self._interval_preserved_checkpoints.append(info)
+          logging.info(
+              'Preserving %s: (Reason: latest falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.append(info)
+          continue
+
+      if (
+          self._options.keep_period is not None
+          and info.step % self._options.keep_period == 0
+      ):
+        logging.info('Preserving %s: (Reason: on keep_period).', info)
+        kept_checkpoints.append(info)
+        continue
+
+      reason = 'worse metric' if self._track_best else 'old checkpoint'
+      logging.info('Deleting %s: (Reason: %s).', info, reason)
+      self._delete_directory(info.step)
+
+    kept_checkpoints += active_checkpoints
+    if self._track_best:
+      # Maintain in ascending step order.
+      self._checkpoints = sorted(kept_checkpoints, key=lambda info: info.step)
+    else:
+      self._checkpoints = kept_checkpoints
 
   def save(self, *args, **kwargs) -> bool:
     """Saves the provided items."""
@@ -442,7 +528,11 @@ class OrbaxCheckpointManager:
     if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
       sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
       for module_name in ['pre_proj', 'post_proj']:
-        for param_name in ['w', 'w1', 'w2', 'b', 'd', 'dw', 'dd']:
+        for param_name in ['w', 'w1', 'w2', 'b', 'd', 'dw', 'dd', 'dwb',
+          'dw1', 'dwhb',
+          'dw2_w1', 'dw2_w2', 'dw2_d',
+          'dwb_w1', 'dwb_w2'
+          ]:
           if module_name in sa and param_name in sa[module_name]:
             param = sa[module_name][param_name]
             # save to this location will be deleted mysteriously when restarting from preemption

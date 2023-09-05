@@ -15,11 +15,11 @@ from paxml import checkpoints  # mapped to internal
 from paxml import checkpoint_managers
 from paxml import train_states
 from paxml import trainer_lib
+from paxml.main import get_experiment
 # from flax.traverse_util import flatten_dict, unflatten_dict
 
 sys.path.append('/home/lishengping/projects/paxml/paxml')
 
-from paxml.main import get_experiment
 
 # try:
 #     jax.distributed.initialize()
@@ -154,6 +154,7 @@ new_trainstate = TrainState(
 )
 padded_global_shapes = jax.tree_map(lambda x: jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype) 
                                     if hasattr(x, 'shape') else x , new_trainstate)
+padded_global_shapes = padded_global_shapes.replace(opt_states=None)
 checkpoint_manager.save(step, new_trainstate, padded_global_shapes, train_input_pipeline=None, force=False)
 print(f'Saved model finished. take time: {time.time() - start}s...')
 
@@ -191,6 +192,7 @@ if check_saved_model_fail_or_success:
         do_eval=True,
     )
     print(f'Start load model to check whether saved model is True or False...')
+    jax_task.model.ici_mesh_shape = [1, 8, 1]
     device_mesh = py_utils.create_device_mesh(
           jax_task.model.ici_mesh_shape,
           jax_task.model.dcn_mesh_shape,
@@ -199,12 +201,13 @@ if check_saved_model_fail_or_success:
     global_mesh = jax.sharding.Mesh(device_mesh, jax_task.model.mesh_axis_names)
     restore_kwargs = {
               'version': 1.1,
-            #   'specs': train_state_metadata.partition_specs, # shard
-            #   'mesh': global_mesh, # mesh
+              'specs': train_state_metadata.partition_specs, # shard
+              'mesh': global_mesh, # mesh
               'transforms': None, # None
           }
     restore_kwargs = {'state': restore_kwargs}
-    items = {'state': train_state_metadata.padded_global_shapes}
+    padded_global_shapes = train_state_metadata.padded_global_shapes.replace(opt_states=None)
+    items = {'state': padded_global_shapes}
     restored_model = checkpoint_manager._manager.restore(step, items=items, restore_kwargs=restore_kwargs)
     print(f'Check model finished. model is  saved successfully. take time: {time.time() - start}s...')
 

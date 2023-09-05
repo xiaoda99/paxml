@@ -660,6 +660,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
 
     task_p.train.save_interval_steps = self.CHECKPOINT_EVERY_N_STEPS
     task_p.train.summary_interval_steps = self.SUMMARY_INTERVAL_STEPS
+    task_p.train.save_on_steps = self.SAVE_ON_STEPS  # XD
     task_p.train.save_max_to_keep = self.CHECKPOINT_MAX_TO_KEEP
     task_p.train.eval_interval_steps = self.EVAL_INTERVAL_STEPS
     task_p.train.profiler_num_steps = self.PROFILER_NUM_STEPS

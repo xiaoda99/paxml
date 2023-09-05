@@ -417,9 +417,9 @@ class Partitioner(metaclass=abc.ABCMeta):
     input_p.infeed_host_index = jax.process_index()
 
     if hasattr(input_p, 'tf_data_service_address'):
-      input_p.tf_data_service_address = (
-          tf_data_service_lib.get_tf_data_service_address()
-      )
+      input_p.tf_data_service_address = None # (  XD: to run in notebook
+      #     tf_data_service_lib.get_tf_data_service_address()
+      # )
       logging.info(
           'input_p.tf_data_service_address: %s', input_p.tf_data_service_address
       )

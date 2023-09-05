@@ -575,6 +575,7 @@ def _create_checkpointer(
       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
   )
   options = checkpoint_managers.CheckpointManagerOptions(
+      save_on_steps=train_p.save_on_steps,  # XD
       max_to_keep=max_to_keep,
       save_interval_steps=save_interval_steps,
       keep_time_interval=keep_interval_timedelta,
