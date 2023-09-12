@@ -412,8 +412,8 @@ def write_summary_entry(summary_writer: SummaryWriter,
   loss = py_utils.maybe_unreplicate_for_fully_replicated(loss)
   weighted_scalars_list = {} # XD remove: py_utils.maybe_unreplicate_for_fully_replicated(
       # weighted_scalars_list)
-  summary_tensors = {} # XD remove: py_utils.maybe_unreplicate_for_fully_replicated(
-      # summary_tensors)
+  summary_tensors = py_utils.maybe_unreplicate_for_fully_replicated(  # {} # XD remove: 
+      summary_tensors)
 
   mean_loss = np.mean(loss).item()
   with summary_writer.as_default():

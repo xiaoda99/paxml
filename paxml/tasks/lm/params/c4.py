@@ -590,9 +590,14 @@ def configure_gpt3_task(
       setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
   for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
-      'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate',
-      'dynamic_w_init', 'src_dependent', 'tgt_dependent', 'dw_activation_cls', 'use_static_w',
-      'use_dw_bias', 'dynamic_w_hidden_dim', 'dw_hidden_activation_cls']:
+      'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
+      'dynamic_w_init', 'dynamic_d_init', 'src_dependent', 'tgt_dependent',
+      'dw_activation_cls', 'dw_activation_weights', 'use_dw_bias',
+      'dynamic_w_hidden_dim', 'dw_hidden_activation_cls', 'merge_dynamic_w_hidden',
+      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const',
+      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 
+      'squeeze_gate_activation_cls', 'summary_verbosity',
+    ]:
     NAME = name.upper()
     if hasattr(cls, NAME):
       # setattr(transformer_layer_p.tr_atten_tpl.cross_head_proj_tpl, name, getattr(cls, NAME))
@@ -1371,8 +1376,20 @@ class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagDWTanh(C4SpmdLlamaMediumResTHF
   PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003LearnOnlyDiagDWTanh(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
+  RELATIVE_SCALE = 1.
+  DW_ACTIVATION_CLS = layers.Tanh
+  SAVE_ON_STEPS = [200, 1000, 5000] + list(range(10000, 60000, 10000))
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagRelScale10th(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
   PROBS_OUTPUT_ACTIVATION_CLS = layers.ReLU
+  SAVE_ON_STEPS = [200, 1000, 5000] + list(range(10000, 60000, 10000))
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagOnlyRelScale10th(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
+  PROBS_OUTPUT_ACTIVATION_CLS = None  # in fact unnecessary
+  SAVE_ON_STEPS = [200, 1000, 5000] + list(range(10000, 60000, 10000))
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagSeqLen512(C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag):
@@ -1471,13 +1488,101 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUProbsDynW0003LearnDiagDWTanh(C4SpmdLlamaXL
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagProbsDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUProbsDynW0003LearnDiagDWTanh):
-  # loss worse than C4SpmdLlamaXL and goes to nan at ~1600 step if ONLY LogitsDynW is used in place of ProbsDynW (due to bug)
+  # loss worse than C4SpmdLlamaXL baseline and goes to nan at ~1600 step if ONLY LogitsDynW is used in place of ProbsDynW (due to bug)
   LOGITS_DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)  # v4 0.122
   LOGITS_LEARNABLE_DIAG = True
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagProbsDWTanh):
   LOGITS_DW_ACTIVATION_CLS = layers.Tanh  # v4 0.144
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GateSiLUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  SQUEEZE_ACTIVATION_CLS = layers.Identity
+  SQUEEZE_GATE_ACTIVATION_CLS = layers.SiLU  # v4 0.104
+  SUMMARY_VERBOSITY = 3
+  PROBS_ABSORB_RESIDUAL = False
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWGateSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  DW_ACTIVATION_CLS = None
+  DW_GATE_ACTIVATION_CLS = layers.SiLU  # v4 0.111 absorres 0.107!?
+  PROBS_OUTPUT_ACTIVATION_CLS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW001LearnDiagDW1GateSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWGateSiLU):
+  DW_GATE_WEIGHTS = ['qw1', 'kw1']  # v4 0.111
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.001)
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW001LearnDiagDW1GateSigmoid(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW001LearnDiagDW1GateSiLU):
+  DW_GATE_ACTIVATION_CLS = layers.Sigmoid  # v4 0.111
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWDDGateSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWGateSiLU):
+  DD_GATE_ACTIVATION_CLS = layers.SiLU  # v4 0.110
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW004LearnDiagDWDDGateSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWDDGateSiLU):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.004)
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  DW_ACTIVATION_CLS = None
+  DW1_NORM_CLS = normalizations.RmsNormNoScale  # v4 0.128
+  PROBS_OUTPUT_ACTIVATION_CLS = None
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00003)
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012) # DYNAMIC_W_INIT.scale * sqrt(n)
+  SAVE_ON_STEPS = [0, 200, 1000, 5000] + list(range(10000, 60000, 10000))
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  DW1_NORM_BIAS_INIT = 1e-6  # v4 0.112
+  SUMMARY_VERBOSITY = 3
+  PROBS_ABSORB_RESIDUAL = False
+  SAVE_ON_STEPS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_5(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  DW1_NORM_BIAS_INIT = 1e-5  # v4 0.112
+  SUMMARY_VERBOSITY = 3
+  PROBS_ABSORB_RESIDUAL = False
+  SAVE_ON_STEPS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6Const(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  DW1_NORM_BIAS_CONST = 1e-6
+  PROBS_ABSORB_RESIDUAL = False # v4 0.134 why faster than C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm?
+  PROBS_ABSORB_RESIDUAL = True # v4 0.128 because absorbres is slower!!??
+  SAVE_ON_STEPS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  DYNAMIC_W_HIDDEN_DIM = 32  # v4 0.112
+  DW_HIDDEN_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormDBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  DW1_NORM_DBIAS_INIT = WeightInit.Gaussian(0.00003)  # v4 0.111
+  DW1_NORM_BIAS_CONST = -1e-6  # cancel out RmsNormNoScale.epsilon
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBiasDDSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  DW_ACTIVATION_WEIGHTS = ['dd']  # v4 0.093
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1Tanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  # W00003 is wrongly copied and misleading. Actually W0003
+  DW_ACTIVATION_WEIGHTS = ['qw1', 'kw1']  # v4 0.128 why slower than C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh
+  PROBS_OUTPUT_ACTIVATION_CLS = None
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012)
+  SAVE_ON_STEPS = [0, 200, 1000, 5000] + list(range(10000, 60000, 10000))
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagProbsDW1Tanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  PROBS_DW_ACTIVATION_WEIGHTS = ['qw1', 'kw1']
+  PROBS_OUTPUT_ACTIVATION_CLS = None
+  SAVE_ON_STEPS = [0, 200, 1000, 5000] + list(range(10000, 60000, 10000))
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUProbsDynWHD16LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUProbsDynW0003LearnDiagDWTanh):
