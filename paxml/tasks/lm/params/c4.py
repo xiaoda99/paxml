@@ -229,7 +229,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
         seqio_input.SeqIOInput,
         name='C4Train' if is_training else 'C4Validation',
         mixture_name='c4_lm_v301_gpt'
-        if is_training
+        if True or is_training # XD
         else 'c4_lm_v301_gpt_eval_tokenized',
         # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
         split_name='train' if is_training else 'validation',  # XD for 3.0.1
@@ -593,8 +593,8 @@ def configure_gpt3_task(
       'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
       'dynamic_w_init', 'dynamic_d_init', 'src_dependent', 'tgt_dependent',
       'dw_activation_cls', 'dw_activation_weights', 'use_dw_bias',
-      'dynamic_w_hidden_dim', 'dw_hidden_activation_cls', 'merge_dynamic_w_hidden',
-      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const',
+      'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls', 'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
+      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias', 'skip_bias',
       'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 
       'squeeze_gate_activation_cls', 'summary_verbosity',
     ]:
@@ -1111,6 +1111,12 @@ class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
   DIMS_PER_HEAD = 128
 
 @experiment_registry.register
+class C4SpmdLlamaXL16x64(C4SpmdLlamaXL):
+  NUM_HEADS = 16  # v3 0.201
+  DIMS_PER_HEAD = 64
+  HIDDEN_DIMS = 6912  # XD: MODEL_DIMS * 4 * 2 // 3
+
+@experiment_registry.register
 class C4SpmdLlamaXLFP32logits(C4SpmdLlamaXL):
   FLOAT32_LOGITS = True  # 0.155
 
@@ -1534,13 +1540,32 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm(C4SpmdLlamaXL
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00003)
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012) # DYNAMIC_W_INIT.scale * sqrt(n)
   SAVE_ON_STEPS = [0, 200, 1000, 5000] + list(range(10000, 60000, 10000))
+  SKIP_BIAS = True  # squeeze_bias is in fact not used due to bug
 
 @experiment_registry.register
-class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
-  DW1_NORM_BIAS_INIT = 1e-6  # v4 0.112
+class C4SpmdLlamaXLResTHLogitsFFN2GELUBiasDynW00003LearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  SKIP_BIAS = False  # v4 0.112
   SUMMARY_VERBOSITY = 3
   PROBS_ABSORB_RESIDUAL = False
   SAVE_ON_STEPS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormNoAbsorbRes(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  DW1_NORM_BIAS_INIT = 1e-6
+  SKIP_BIAS = True
+  # SUMMARY_VERBOSITY = 3
+  # PROBS_ABSORB_RESIDUAL = False
+  PROBS_ABSORB_RESIDUAL = True
+  SAVE_ON_STEPS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  # curiouly, not exactly reproducable, maybe due to subtle difference in add_summaries (more likely) or absorb_res (less likely)
+  DW1_NORM_BIAS_INIT = 1e-6  # v4 0.112  w/o summary 0.134
+  SUMMARY_VERBOSITY = 9  # 3 -> 9 at step 38700
+  PROBS_ABSORB_RESIDUAL = False  # TODO: disable absorb_res may decrease loss a little bit?
+  SAVE_ON_STEPS = None
+  SKIP_BIAS = True  # added after fix the bias not used bug to *preserve* the bug when continuing training at step 29500
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_5(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
@@ -1557,9 +1582,38 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6Const(
   SAVE_ON_STEPS = None
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormFixBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  # loss nan at very beginning after fix dw1_norm_bias
+  USE_SQUEEZE_BIAS = False
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormSquareBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  USE_SQUEEZE_BIAS = False  # only fix dw1_norm_bias but not squeeze_bias
+  SQUARE_DW1_NORM_BIAS = True  # v4 0.112
+  DW1_NORM_BIAS_INIT = 1e-3
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
   DYNAMIC_W_HIDDEN_DIM = 32  # v4 0.112
   DW_HIDDEN_ACTIVATION_CLS = layers.GELU
+  SKIP_BIAS = True
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6):
+  USE_DW_HIDDEN_BIAS = False  # v4 0.112
+  SUMMARY_VERBOSITY = 3
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
+  DYNAMIC_D_HIDDEN_DIM = 16  # v4 0.112
+  SUMMARY_VERBOSITY = 3
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD24GateSiLULearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
+  DYNAMIC_W_HIDDEN_DIM = 24  # v4 0.111
+  DW_HIDDEN_GATE_ACT_CLS = layers.SiLU
+  SKIP_BIAS = True
+  SUMMARY_VERBOSITY = 3
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormDBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
@@ -1569,6 +1623,36 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormDBias(C4SpmdLl
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBiasDDSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
   DW_ACTIVATION_WEIGHTS = ['dd']  # v4 0.093
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBiasAllBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
+  # class name should be C4SpmdLlamaMediumResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBiasAllBias
+  NUM_LAYERS = 24
+  MODEL_DIMS = 1024
+  HIDDEN_DIMS = 2816  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 16
+  DIMS_PER_HEAD = 64
+  
+  LR_COS_DECAY_END = 50000
+  ICI_MESH_SHAPE = [1, 32, 1] 
+
+  DW1_NORM_BIAS_INIT = 1e-6  # v3 0.152
+  USE_BIAS = True
+  SAVE_ON_STEPS = [0, 10, 20, 40, 100, 200, 400, 800]
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBiasNoBias(C4SpmdLlamaMediumResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBiasAllBias):
+  # class name should be C4SpmdLlamaMediumResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBiasNoBias
+  # loss nan at very beginning after fix dw1_norm_bias
+  USE_BIAS = False  # v3 0.152
+
+@experiment_registry.register
+class C4SpmdLlamaMediumResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormSquareBiasFP32logitsLRx10(C4SpmdLlamaMediumResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBiasAllBias):
+  USE_BIAS = False
+  SQUARE_DW1_NORM_BIAS = True
+  DW1_NORM_BIAS_INIT = 1e-3
+  FLOAT32_LOGITS = True
+  LEARNING_RATE = 2e-3
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1Tanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
