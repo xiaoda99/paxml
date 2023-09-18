@@ -576,6 +576,7 @@ def configure_gpt3_task(
     model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
   transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
   transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
+  transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
   # XD
   for name in ['num_groups', 'project_logits', 'project_probs', 
               'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -592,22 +593,20 @@ def configure_gpt3_task(
   for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
       'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
       'dynamic_w_init', 'dynamic_d_init', 'src_dependent', 'tgt_dependent',
-      'dw_activation_cls', 'dw_activation_weights', 'use_dw_bias',
+      'dw_activation_cls', 'dw_activation_weights', 'dw_cap', 'use_dw_bias', 'dynamic_squeeze_ratio',
       'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls', 'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
       'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias', 'skip_bias',
-      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 
+      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls',
       'squeeze_gate_activation_cls', 'summary_verbosity',
     ]:
     NAME = name.upper()
-    if hasattr(cls, NAME):
-      # setattr(transformer_layer_p.tr_atten_tpl.cross_head_proj_tpl, name, getattr(cls, NAME))
+    if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, NAME))
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, NAME))
-    else:
-      if hasattr(cls, 'LOGITS_' + NAME):
-        setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
-      if hasattr(cls, 'PROBS_' + NAME):
-        setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
+    if hasattr(cls, 'LOGITS_' + NAME):
+      setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
+    if hasattr(cls, 'PROBS_' + NAME):
+      setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -1111,6 +1110,11 @@ class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
   DIMS_PER_HEAD = 128
 
 @experiment_registry.register
+class C4SpmdLlamaXLMQA(C4SpmdLlamaXLHead16x128):
+  NUM_KV_HEADS = 1  # v3 0.202
+  HIDDEN_DIMS = 6784
+
+@experiment_registry.register
 class C4SpmdLlamaXL16x64(C4SpmdLlamaXL):
   NUM_HEADS = 16  # v3 0.201
   DIMS_PER_HEAD = 64
@@ -1417,6 +1421,11 @@ class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003OnlyLearnDiagDWTanh(C4SpmdLlamaMedi
   SRC_DEPENDENT = False
 
 @experiment_registry.register
+class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003OnlyProbsLearnDiagDWTanh(C4SpmdLlamaMediumResTHFFN16OnlyDynW0003OnlyLearnDiagDWTanh):
+  PROJECT_LOGITS = False
+  PROBS_LEARNABLE_DIAG = True # v3 0.373
+
+@experiment_registry.register
 class C4SpmdLlamaMediumResTHFFN16OnlyDynW0003(C4SpmdLlamaMediumResTHFFN16DynW0003):
   USE_STATIC_W = False  # 0.401!? much faster than C4SpmdLlamaMediumResTHFFN16OnlyDynW0003LearnDiag
   
@@ -1503,6 +1512,29 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTH
   LOGITS_DW_ACTIVATION_CLS = layers.Tanh  # v4 0.144
 
 @experiment_registry.register
+class MQAXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  NUM_KV_HEADS = 1  # v4 0.109
+  HIDDEN_DIMS = 6784
+  USE_SQUEEZE_BIAS = False
+  SUMMARY_VERBOSITY = 3
+  PROBS_ABSORB_RESIDUAL = False
+  
+@experiment_registry.register
+class MQAXLResTHLogitsFFN2GELUDynWHD32LearnDiagDWTanh(MQAXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  DYNAMIC_W_HIDDEN_DIM = 32  # v4 0.109
+  DW_HIDDEN_ACTIVATION_CLS = layers.GELU
+  USE_DW_HIDDEN_BIAS = False
+
+@experiment_registry.register
+class LlamaXL16x64ResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  NUM_HEADS = 16
+  DIMS_PER_HEAD = 64  # v4 0.109
+  HIDDEN_DIMS = 6912
+  USE_SQUEEZE_BIAS = False
+  SUMMARY_VERBOSITY = 3
+  PROBS_ABSORB_RESIDUAL = False
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GateSiLUDynW0003LearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
   SQUEEZE_ACTIVATION_CLS = layers.Identity
   SQUEEZE_GATE_ACTIVATION_CLS = layers.SiLU  # v4 0.104
@@ -1562,7 +1594,7 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormNoAbsorbRes(C4
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):
   # curiouly, not exactly reproducable, maybe due to subtle difference in add_summaries (more likely) or absorb_res (less likely)
   DW1_NORM_BIAS_INIT = 1e-6  # v4 0.112  w/o summary 0.134
-  SUMMARY_VERBOSITY = 9  # 3 -> 9 at step 38700
+  SUMMARY_VERBOSITY = 3  # 3 -> 9 at step 38700, back to 3 at step 53000 after loss spike
   PROBS_ABSORB_RESIDUAL = False  # TODO: disable absorb_res may decrease loss a little bit?
   SAVE_ON_STEPS = None
   SKIP_BIAS = True  # added after fix the bias not used bug to *preserve* the bug when continuing training at step 29500
@@ -1600,13 +1632,47 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6(C4Spmd
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6):
+  # First 3220 steps has dynamic_d_hidden_dim params dd1, qd, kw as well as dd, but changed little
+  # probably these params are not used and changed due to weight decay
+  # Some params's curves turn @9020 when C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm stops training
   USE_DW_HIDDEN_BIAS = False  # v4 0.112
   SUMMARY_VERBOSITY = 3
+  DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @1600 in _fix run, @22400 in original run
+  SAVE_ON_STEPS = list(range(30000, 70000, 10000))  # add @27400
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
+  # has dd params, but changed little, probably these params are not used and changed due to weight decay
   DYNAMIC_D_HIDDEN_DIM = 16  # v4 0.112
   SUMMARY_VERBOSITY = 3
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN1GELUDynWHD32DW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
+  # unnecesarily add '_fix' suffix
+  LOGITS_SQUEEZE_RATIO = 1  # v4 0.110
+  DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @700
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
+  DYNAMIC_SQUEEZE_RATIO = 8  # v4 0.093
+  DYNAMIC_W_HIDDEN_DIM = 64
+  DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @600
+  SAVE_ON_STEPS = list(range(10000, 70000, 10000))  # add @6600
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
+  USE_SQUEEZE_BIAS = False
+  DYNAMIC_W_HIDDEN_DIM = 32  # v4
+  DW_HIDDEN_ACTIVATION_CLS = layers.GELU
+  USE_DW_HIDDEN_BIAS = False
+  PROBS_ABSORB_RESIDUAL = False
+  SUMMARY_VERBOSITY = 3
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiag(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDWTanh):
+  LOGITS_DW_ACTIVATION_CLS = None
+  PROBS_DW_ACTIVATION_CLS = None
+  DW_CAP = {'qw1': 1., 'kw1': 1., 'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD24GateSiLULearnDiagDW1RmsNormBias1e_6(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
@@ -1623,6 +1689,12 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormDBias(C4SpmdLl
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBiasDDSiLU(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6):
   DW_ACTIVATION_WEIGHTS = ['dd']  # v4 0.093
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormOnlyDiagHD16(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNormBias1e_6): # diverge
+  DW_ACTIVATION_WEIGHTS = ['dd']  # v4 0.096
+  DD_ACTIVATION_CLS = layers.GELU
+  SUMMARY_VERBOSITY = 3
 
 @experiment_registry.register
 class C4SpmdLlamaMediumResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBiasAllBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW00003LearnDiagDW1RmsNorm):

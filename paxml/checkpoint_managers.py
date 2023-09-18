@@ -528,6 +528,7 @@ class OrbaxCheckpointManager:
     if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
       sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
       for module_name in ['pre_proj', 'post_proj']:
+        if module_name not in sa: continue
         for param_name in sa[module_name]:
         # for param_name in ['w', 'w1', 'w2', 'b', 'd', 'dw', 'dd', 'dwb',
         #   'dw1', 'dwhb',
