@@ -408,6 +408,7 @@ class TransformerLmSpmdAdam(model_params.TransformerLmSpmdAdafactor):
       stacked_p = stacked_p.block
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
     transformer_layer_p.tr_atten_tpl.use_bias = self.USE_BIAS
+    if hasattr(self, 'USE_QK_BIAS'): transformer_layer_p.tr_atten_tpl.use_qk_bias = self.USE_QK_BIAS
 
     task_p = set_adam_and_learning_rate_schedule(cls=self, task_p=task_p)
 
@@ -536,20 +537,26 @@ def configure_gpt3_task(
   )
   model_p.decoder_tpl.seqlen = cls.MAX_SEQ_LEN  # pytype: disable=attribute-error  # enable-nested-classes
 
-  model_p.params_init = WeightInit.Gaussian(0.006)
-
-  softmax_init = WeightInit.Gaussian(0.006)
-  model_p.lm_tpl.softmax_tpl.params_init = softmax_init
+  if getattr(cls, 'EXPLICIT_INIT', True):  # XD
+    model_p.params_init = WeightInit.Gaussian(0.006)
+    softmax_init = WeightInit.Gaussian(0.006)
+    model_p.lm_tpl.softmax_tpl.params_init = softmax_init
+  else:  # XD: same as TransformerLmSpmdAdafactor
+    softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(cls.MODEL_DIMS))
+    model_p.lm_tpl.softmax_tpl.params_init = softmax_init
+    assert getattr(cls, 'SCALE_EMBEDDING', False)
+    if cls.SEPARATE_EMBEDDING:
+      model_p.lm_tpl.separate_embedding_tpl.params_init = softmax_init
   model_p.lm_tpl.softmax_tpl.feed_forward_tpl.has_bias = False
   model_p.lm_tpl.softmax_tpl.soft_cap_logits = None
 
   if cls.SEPARATE_EMBEDDING:
-    model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = False
+    model_p.lm_tpl.separate_embedding_tpl.scale_sqrt_depth = getattr(cls, 'SCALE_EMBEDDING', False)  # XD: False
     model_p.lm_tpl.separate_embedding_tpl.lookup_style = (
         cls.EMBEDDING_LOOKUP_STYLE
     )
   else:
-    model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = False
+    model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = getattr(cls, 'SCALE_EMBEDDING', False)  # XD: False
     model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
@@ -593,7 +600,8 @@ def configure_gpt3_task(
   for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
       'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
       'dynamic_w_init', 'dynamic_d_init', 'src_dependent', 'tgt_dependent',
-      'dw_activation_cls', 'dw_activation_weights', 'dw_cap', 'use_dw_bias', 'dynamic_squeeze_ratio',
+      'dw_activation_cls', 'dw_activation_weights', 'use_dw_bias', 'dynamic_squeeze_ratio',
+      'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
       'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls', 'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
       'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias', 'skip_bias',
       'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls',
@@ -836,6 +844,57 @@ class C4SpmdLlamaMedium(C4SpmdGpt3SmallRoPE):
   ICI_MESH_SHAPE = [1, 32, 1]  # 0.549， combine_qkv 0.493???!!!, v5 0.436???
   # ICI_MESH_SHAPE = [32, 1, 1]
 
+@experiment_registry.register
+class C4SpmdGPT:
+  ACTIVATION_CLS = layers.GELU
+  USE_GATED_ACTIVATION = False
+  SEPARATE_EMBEDDING = False
+  TRAINABLE_POSITION_EMB = True
+  TRAINABLE_PE_MAX_SEQ_LEN = 16384
+  USE_ROTARY_POSITION_EMB = False
+
+@experiment_registry.register
+class C4SpmdGPTSepEmb:
+  ACTIVATION_CLS = layers.GELU
+  USE_GATED_ACTIVATION = False
+  TRAINABLE_POSITION_EMB = True
+  TRAINABLE_PE_MAX_SEQ_LEN = 16384
+  USE_ROTARY_POSITION_EMB = False
+
+@experiment_registry.register
+class C4SpmdGPTMedium(C4SpmdGPT, C4SpmdLlamaMedium):
+  HIDDEN_DIMS = 4096  # v3 bug (USE_ROTARY_POSITION_EMB==True) 0.585??? vs fix 0.571
+
+@experiment_registry.register
+class C4SpmdGPTMediumSepEmb(C4SpmdGPTSepEmb, C4SpmdLlamaMedium):
+  HIDDEN_DIMS = 4096  # v3
+
+@experiment_registry.register
+class C4SpmdLlamaMediumNoSwiGLU(C4SpmdLlamaMedium):
+  ACTIVATION_CLS = layers.GELU
+  USE_GATED_ACTIVATION = False  # v3 0.55
+  HIDDEN_DIMS = 4096
+
+@experiment_registry.register
+class C4SpmdLlamaMediumNoRoPE(C4SpmdLlamaMedium):
+  SEPARATE_EMBEDDING = False
+  TRAINABLE_POSITION_EMB = True  # v3 0.561
+  TRAINABLE_PE_MAX_SEQ_LEN = 16384
+  USE_ROTARY_POSITION_EMB = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumNoRoPESepEmb(C4SpmdLlamaMedium):
+  TRAINABLE_POSITION_EMB = True  # v3
+  TRAINABLE_PE_MAX_SEQ_LEN = 16384
+  USE_ROTARY_POSITION_EMB = False
+
+@experiment_registry.register
+class C4SpmdLlamaMediumNoRoPESepScaleEmb(C4SpmdLlamaMedium):
+  EXPLICIT_INIT = False
+  SCALE_EMBEDDING = True
+  TRAINABLE_POSITION_EMB = False
+  USE_ROTARY_POSITION_EMB = False
+  
 @experiment_registry.register
 class C4SpmdLlamaMediumSeqLen512(C4SpmdLlamaMedium):
   MAX_SEQ_LEN = 512  # 0.648
@@ -1108,6 +1167,16 @@ class C4SpmdLlamaMediumResTH(C4SpmdLlamaMedium):
 class C4SpmdLlamaXLHead16x128(C4SpmdLlamaXL):
   NUM_HEADS = 16  # 0.20
   DIMS_PER_HEAD = 128
+
+@experiment_registry.register
+class C4SpmdGPTXLSepEmb(C4SpmdGPTSepEmb, C4SpmdLlamaXLHead16x128):
+  HIDDEN_DIMS = 8192  # v3 0.204
+
+@experiment_registry.register
+class C4SpmdLlamaXLNoSwiGLU(C4SpmdLlamaXLHead16x128):
+  ACTIVATION_CLS = layers.GELU
+  USE_GATED_ACTIVATION = False  # v3 0.208 vs v4 merely 0.21 !?
+  HIDDEN_DIMS = 8192
 
 @experiment_registry.register
 class C4SpmdLlamaXLMQA(C4SpmdLlamaXLHead16x128):
@@ -1632,13 +1701,16 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6(C4Spmd
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32LearnDiagDW1RmsNormBias1e_6):
-  # First 3220 steps has dynamic_d_hidden_dim params dd1, qd, kw as well as dd, but changed little
-  # probably these params are not used and changed due to weight decay
-  # Some params's curves turn @9020 when C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm stops training
+  # First 3220 steps has dynamic_d_hidden_dim params dd1, qd, kw as well as dd, but changed little, probably only due to weight decay
+  # Some params's and activations std's curves turn @9020 when C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm stops training
+  # Another turn @~22480 due to adding dw_cap @22400, which is too late, apparently hurting performance
   USE_DW_HIDDEN_BIAS = False  # v4 0.112
   SUMMARY_VERBOSITY = 3
-  DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @1600 in _fix run, @22400 in original run
-  SAVE_ON_STEPS = list(range(30000, 70000, 10000))  # add @27400
+  # dd caps duplicate with DW_ACTIVATION_CLS = layers.Tanh
+  # DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @1600 in _fix run, @22400 in original run
+  # PROBS_DW_CAP = {'qw2': 2., 'kw2': 2., 'qdd': 1., 'kdd': 1.}  # switch @13800 in _fix run, @32200 in original run, accidentally removed for original run @44300
+  SAVE_ON_STEPS = list(range(10000, 70000, 10000))  # add @27400
+  # LOGITS/PROBS_DW_ACTIVATION_CLS = layers.Tanh  # wrongly inherited from C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh, only effective on dd
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWDHD32NoBiasLearnDiagDW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
@@ -1656,8 +1728,43 @@ class C4SpmdLlamaXLResTHLogitsFFN1GELUDynWHD32DW1RmsNorm(C4SpmdLlamaXLResTHLogit
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
   DYNAMIC_SQUEEZE_RATIO = 8  # v4 0.093
   DYNAMIC_W_HIDDEN_DIM = 64
-  DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @600
-  SAVE_ON_STEPS = list(range(10000, 70000, 10000))  # add @6600
+  # dd caps duplicate with DW_ACTIVATION_CLS = layers.Tanh
+  # DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @600
+  # PROBS_DW_CAP = {'qw2': 2., 'kw2': 2., 'qdd': 1., 'kdd': 1.}  # switch @10300
+  SAVE_ON_STEPS = list(range(10000, 70000, 10000))
+
+  # LOGITS/PROBS_DW_ACTIVATION_CLS = layers.Tanh  # wrongly inherited from C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh, only effective on dd
+  # for _nocap run, use PROBS_DW_CAP before step 6200 (though commented out in this class, somehow wrongly inherited from parent),
+  # and remove PROBS_DW_CAP afterwards on a reboot (dd cap remains due to DW_ACTIVATION_CLS = layers.Tanh bug), causing a slight turn of params and activations @6200
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  LOGITS_DW_ACTIVATION_CLS = None
+  PROBS_DW_ACTIVATION_CLS = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormLearnedDDCap(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
+  LEARNED_DW_CAP = {'qdd': 1., 'kdd': 1.}
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormProbsDWCap(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):  
+  # debug, exactly align with C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm_cap
+  PROBS_DW_CAP = {'qw2': 2., 'kw2': 2., 'qdd': 1., 'kdd': 1.}
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormQKBias(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  USE_QK_BIAS = True
+  
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32DW1RmsNormLearnedCap(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDW1RmsNorm):
+  PROBS_DW_CAP = None
+  LEARNED_DW_CAP = {'qw2': 1., 'kw2': 1., 'qdd': 1., 'kdd': 1.}
+  SAVE_ON_STEPS = list(range(10000, 70000, 10000))
+
+@experiment_registry.register
+class MediumResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaMedium, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  SUMMARY_VERBOSITY = 9 # v3 w/ summary 0.081, w/o summary 0.102 << C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiagDWTanh v3 0.163 << C4SpmdLlamaMediumResTHFFN16DynW0003LearnDiag v4 0.308
+  SAVE_ON_STEPS = None
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWHD32NoBiasLearnDiagDWTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh):
