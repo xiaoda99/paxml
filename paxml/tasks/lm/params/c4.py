@@ -597,16 +597,18 @@ def configure_gpt3_task(
     if hasattr(cls, NAME):
       setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
+  dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
+      'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
+      'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
+      'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
+      'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
+      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
+      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
+  ]
   for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
       'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
-      'dynamic_w_init', 'dynamic_d_init', 'src_dependent', 'tgt_dependent',
-      'dw_activation_cls', 'dw_activation_weights', 'use_dw_bias', 'dynamic_squeeze_ratio',
-      'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
-      'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls', 'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
-      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias', 'skip_bias',
-      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls',
-      'squeeze_gate_activation_cls', 'summary_verbosity',
-    ]:
+      'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
+    ] + dynamic_w_attrs:
     NAME = name.upper()
     if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, NAME))
@@ -615,6 +617,17 @@ def configure_gpt3_task(
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
     if hasattr(cls, 'PROBS_' + NAME):
       setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
+  if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
+    transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
+    for name in dynamic_w_attrs:
+      NAME = name.upper()
+      if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
+        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, NAME))
+        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, NAME))
+      if hasattr(cls, 'LOGITS_' + NAME):
+        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
+      if hasattr(cls, 'PROBS_' + NAME):
+        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
 
   transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
   if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
@@ -952,6 +965,14 @@ class C4SpmdLlamaXXL(C4SpmdLlamaXL):
   MODEL_DIMS = 3072
   HIDDEN_DIMS = 8192  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 24
+  DIMS_PER_HEAD = 128
+
+@experiment_registry.register
+class C4SpmdLlama7B(C4SpmdLlamaXXL):
+  NUM_LAYERS = 32  # v4
+  MODEL_DIMS = 4096
+  HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
+  NUM_HEADS = 32
   DIMS_PER_HEAD = 128
 
 @experiment_registry.register
@@ -1732,17 +1753,107 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHL
   # DW_CAP = {'qw2': 2., 'kw2': 2., 'dd': 1.}  # add @600
   # PROBS_DW_CAP = {'qw2': 2., 'kw2': 2., 'qdd': 1., 'kdd': 1.}  # switch @10300
   SAVE_ON_STEPS = list(range(10000, 70000, 10000))
+  # CHECKPOINT_MAX_TO_KEEP = 20  # for last steps of _nocap run
 
   # LOGITS/PROBS_DW_ACTIVATION_CLS = layers.Tanh  # wrongly inherited from C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagDWTanh, only effective on dd
   # for _nocap run, use PROBS_DW_CAP before step 6200 (though commented out in this class, somehow wrongly inherited from parent),
   # and remove PROBS_DW_CAP afterwards on a reboot (dd cap remains due to DW_ACTIVATION_CLS = layers.Tanh bug), causing a slight turn of params and activations @6200
 
-@experiment_registry.register
+@experiment_registry.register  # praxis 29dcf7b, paxml bcccfea 
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
   LOGITS_DW_ACTIVATION_CLS = None
   PROBS_DW_ACTIVATION_CLS = None
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanhChunk128(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
+  # QUERY_CHUNK_SIZE = 64  # v4 0.131
+  # QUERY_CHUNK_SIZE = 256  # v4 0.135
+  QUERY_CHUNK_SIZE = 128  # v4 +summary 0.142, 0.152, -transpose 0.153, -transpose+tri-einsum 0.153, -transpose+loop 0.162!
+  TRANSPOSE = False
+  LOOP_OVER_DYNAMIC_HD = True
+  SUMMARY_VERBOSITY = 9
+
+@experiment_registry.register
+class XXLResTHLogitsFFN2GELUDynWFFN8HD64Chunk128(C4SpmdLlamaXXL, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
+  NUM_LAYERS = 13
+  PERCORE_BATCH_SIZE = 16
+  ICI_MESH_SHAPE = [1, 32, 1]
+  SUMMARY_INTERVAL_STEPS = 5
+
+  QUERY_CHUNK_SIZE = 128  # v4 0.228
+  TRANSPOSE = False
+  SUMMARY_VERBOSITY = 9
+
+@experiment_registry.register
+class XXLResTHLogitsFFN2GELUDynWFFN12HD96Chunk128(XXLResTHLogitsFFN2GELUDynWFFN8HD64Chunk128):
+  DYNAMIC_SQUEEZE_RATIO = 12
+  DYNAMIC_W_HIDDEN_DIM = 96  # v4 0.23, SW 0.292
+  QUERY_CHUNK_SIZE = 128  # None v4 0.17, SW 0.228
+  PROBS_ABSORB_RESIDUAL = False  # True v4 0.222, SW 0.299, SW NoChunk 0.234
+  # NoMLP  # v4 SW 0.471
+
+@experiment_registry.register
+class XXLBaseline(C4SpmdLlamaXXL):
+  NUM_LAYERS = 13  # v4 0.325, Chunk128 0.331
+  PERCORE_BATCH_SIZE = 16
+  ICI_MESH_SHAPE = [1, 32, 1]
+  SUMMARY_INTERVAL_STEPS = 5
+
+  SUMMARY_VERBOSITY = 9
+  # QUERY_CHUNK_SIZE = 128
+  # NoMLP  # v4 0.561
+
+@experiment_registry.register
+class Llama7BResTHLogitsFFN2GELUDynWChunk(C4SpmdLlama7B, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
+  MAX_SEQ_LEN = 1024 #* 2  # v4 rank2 chunk128 0.120, rank2 chunk256 0.118
+  NUM_LAYERS = 13
+  PERCORE_BATCH_SIZE = 16 #// 2
+  ICI_MESH_SHAPE = [1, 32, 1]
+  SUMMARY_INTERVAL_STEPS = 5
+
+  PROJECT_LOGITS = True  # rank2looponly 0.198 compilation and first few steps very slow?
+  PROJECT_PROBS = True
+  DYNAMIC_SQUEEZE_RATIO = 8 * 2
+  DYNAMIC_W_HIDDEN_DIM = 256 // 2
+  QUERY_CHUNK_SIZE = 128  # v4 rank4 0.156, 
+  # rank1only-dd 0.199, ran4looponly-dd 0.167!?, rank4only-dd 0.169
+  # rank2 0.159, rank2only 0.170, rank2only-dd 172, SW 0.198, SW+dd 0.193, ddonly 0.217/0.22?!, 
+  # rank2loop 0.163, rank2looponly 0.168?, rank2looponly-dd 0.181
+  # rank2 NoChunk 0.119 rank16 0.255/2=0.128 rank2probs 0.183
+
+  # baseline 1/0.22 = 4.545
+  # ran1only-dd 1/0.199 = +0.48 5.025
+  # rand2looponly-dd 1/0.181 = +0.98 5.525 ~ ran1only-dd*2
+  # SW+dd 1/0.193 = +0.6363 5.1813
+  # rand2loop 1/0.163 = +1.59 6.135 ~ rand2looponly-dd + SW+dd
+  
+  # SW 1/0.198 = + 0.5055 5.0505
+  # rand2looponly 1/0.168 = +1.4074 5.9524
+  # SW + rand2looponly > rand2loop
+
+  # rank2only 1/0.170 = +1.337 5.882
+  # rank2 1/0.159 = +1.7443 6.289 ~ rank2only + SW
+  TRANSPOSE = False
+  PROBS_ABSORB_RESIDUAL = False
+  LOOP_OVER_DYNAMIC_HD = True
+  SUMMARY_VERBOSITY = 9
+  # ParaMLP # v4 rank2 0.158
+  # remove dim G  # rank2 0.136?!
+  
+@experiment_registry.register
+class Llama7BBaseline(C4SpmdLlama7B):
+  MAX_SEQ_LEN = 1024 #* 2  # v4 0.174
+  NUM_LAYERS = 13  # v4 0.212, Chunk128 0.22
+  PERCORE_BATCH_SIZE = 16 #// 2
+  ICI_MESH_SHAPE = [1, 32, 1]
+  SUMMARY_INTERVAL_STEPS = 5
+
+  SUMMARY_VERBOSITY = 9
+  # QUERY_CHUNK_SIZE = 128
+  # NoMLP  # v4 0.561
+  # ParaMLP # v4 0.219
+
+@experiment_registry.register  # praxis 29dcf7b, paxml bcccfea
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormLearnedDDCap(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
   LEARNED_DW_CAP = {'qdd': 1., 'kdd': 1.}
 
