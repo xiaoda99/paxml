@@ -636,13 +636,26 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     if self.USE_ROTARY_POSITION_EMB:
       transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
 
+    num_early_layers = getattr(self, 'NUM_EARLY_LAYERS', 0)  # XD
+    if num_early_layers:
+      model_p.lm_tpl.early_stacked_transformer_tpl = pax_fiddle.Config(
+          layers.StackedTransformerRepeated
+      )
+      stacked_transformer_tpl.num_layers = 1
+      model_p.lm_tpl.early_stacked_transformer_tpl.block = stacked_transformer_tpl.clone()
+      model_p.lm_tpl.early_stacked_transformer_tpl.x_times = num_early_layers
+      model_p.lm_tpl.early_stacked_transformer_tpl.checkpoint_policy = (
+          self.CHECKPOINT_POLICY)
     if self.USE_REPEATED_LAYER:
       model_p.lm_tpl.stacked_transformer_tpl = pax_fiddle.Config(
           layers.StackedTransformerRepeated
       )
-      stacked_transformer_tpl.num_layers = 1
+      num_layers_per_block = getattr(self, 'NUM_LAYERS_PER_BLOCK', 1)  # XD
+      stacked_transformer_tpl.num_layers = num_layers_per_block
       model_p.lm_tpl.stacked_transformer_tpl.block = stacked_transformer_tpl
-      model_p.lm_tpl.stacked_transformer_tpl.x_times = self.NUM_LAYERS
+      assert (self.NUM_LAYERS - num_early_layers) % num_layers_per_block == 0, \
+        f'({self.NUM_LAYERS} - {num_early_layers}) % {num_layers_per_block} != 0'
+      model_p.lm_tpl.stacked_transformer_tpl.x_times = (self.NUM_LAYERS - num_early_layers) // num_layers_per_block  # XD
       model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
           self.CHECKPOINT_POLICY)
     else:

@@ -561,86 +561,94 @@ def configure_gpt3_task(
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
 
-  stacked_p = model_p.lm_tpl.stacked_transformer_tpl
-  if fdl.get_callable(stacked_p) == transformers.PipelinedTransformer:
-    stacked_p = stacked_p.pipeline_stage
-  if issubclass(
-      fdl.get_callable(stacked_p), transformers.StackedTransformerRepeated
-  ):
-    stacked_p = stacked_p.block
-  transformer_layer_p = stacked_p.transformer_layer_params_tpl
+  for prefix in (['early_'] if getattr(cls, 'NUM_EARLY_LAYERS', 0) else []) + ['']:  # XD
+    # stacked_p = model_p.lm_tpl.stacked_transformer_tpl
+    stacked_p = getattr(model_p.lm_tpl, prefix + 'stacked_transformer_tpl')
+    if fdl.get_callable(stacked_p) == transformers.PipelinedTransformer:
+      stacked_p = stacked_p.pipeline_stage
+    if issubclass(
+        fdl.get_callable(stacked_p), transformers.StackedTransformerRepeated
+    ):
+      stacked_p = stacked_p.block
+    transformer_layer_p = stacked_p.transformer_layer_params_tpl
 
-  transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
-  if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
-    transformer_layer_p.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
-    transformer_layer_p.tr_fflayer_tpl.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
-    model_p.lm_tpl.final_ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
-  if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
-    transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-    transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-    model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
-  transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
-  transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
-  transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
-  # XD
-  for name in ['num_groups', 'project_logits', 'project_probs', 
-              'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
-              'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
-              'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
-              'dim_per_head_v', 'value_gate_activation_cls',
-              'float32_logits', 'float32_probs', 'float32_value', 'qk_norm',
-              'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
-              ]:
-    NAME = name.upper()
-    if hasattr(cls, NAME):
-      setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
-
-  dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
-      'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
-      'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
-      'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
-      'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
-      'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
-      'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
-  ]
-  for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
-      'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
-      'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
-    ] + dynamic_w_attrs:
-    NAME = name.upper()
-    if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
-      setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, NAME))
-      setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, NAME))
-    if hasattr(cls, 'LOGITS_' + NAME):
-      setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
-    if hasattr(cls, 'PROBS_' + NAME):
-      setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
-  if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
-    transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
-    for name in dynamic_w_attrs:
+    transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+    transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+    model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
+    if cls.NORMALIZATION_CLS == normalizations.RmsNorm:  # XD
+      transformer_layer_p.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+      transformer_layer_p.tr_fflayer_tpl.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+      model_p.lm_tpl.final_ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+    if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
+      transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+      transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+      model_p.lm_tpl.final_ln_tpl.epsilon = cls.LAYERNORM_EPSILON
+    transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
+    transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
+    transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
+    # XD
+    for name in ['num_groups', 'project_logits', 'project_probs', 
+                'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
+                'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
+                'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
+                'dim_per_head_v', 'value_gate_activation_cls',
+                'float32_logits', 'float32_probs', 'float32_value', 'qk_norm',
+                'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
+                ]:
       NAME = name.upper()
+      if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
+        NAME = NAME + '_EARLY'
+      if hasattr(cls, NAME):
+        setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
+
+    dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
+        'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
+        'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
+        'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
+        'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
+        'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
+        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
+    ]
+    for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
+        'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
+        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
+      ] + dynamic_w_attrs:
+      NAME = name.upper()
+      if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
+        NAME = NAME + '_EARLY'
       if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
-        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, NAME))
-        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, NAME))
+        setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, NAME))
+        setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, NAME))
       if hasattr(cls, 'LOGITS_' + NAME):
-        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
+        setattr(transformer_layer_p.tr_atten_tpl.cross_head_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
       if hasattr(cls, 'PROBS_' + NAME):
-        setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
+        setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
+    if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
+      transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
+      for name in dynamic_w_attrs:
+        NAME = name.upper()
+        if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
+          NAME = NAME + '_EARLY'
+        if hasattr(cls, NAME) and not hasattr(cls, 'LOGITS_' + NAME) and not hasattr(cls, 'PROBS_' + NAME):
+          setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, NAME))
+          setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, NAME))
+        if hasattr(cls, 'LOGITS_' + NAME):
+          setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_pre_proj_tpl, name, getattr(cls, 'LOGITS_' + NAME))
+        if hasattr(cls, 'PROBS_' + NAME):
+          setattr(transformer_layer_p.tr_atten_tpl.dynamic_w_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
 
-  transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
-  if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
-  if not cls.USE_GATED_ACTIVATION: transformer_layer_p.hidden_dims = cls.MODEL_DIMS * 4 # XD add
+    transformer_layer_p.tr_fflayer_tpl.has_bias = not cls.USE_GATED_ACTIVATION or cls.USE_BIAS  # XD add
+    if cls.ACTIVATION_CLS == layers.GELU: transformer_layer_p.tr_fflayer_tpl.activation_tpl.approximate = True  # XD: add if
+    if not cls.USE_GATED_ACTIVATION: transformer_layer_p.hidden_dims = cls.MODEL_DIMS * 4 # XD add
 
-  for atten_p in (
-      transformer_layer_p.tr_atten_tpl,
-      transformer_layer_p.cross_atten_tpl,
-  ):
-    if atten_p is None:
-      continue
-    atten_wp = atten_p.weight_split_dims_mapping
-    atten_wp.proj = ['data', 'mdl', None]
+    for atten_p in (
+        transformer_layer_p.tr_atten_tpl,
+        transformer_layer_p.cross_atten_tpl,
+    ):
+      if atten_p is None:
+        continue
+      atten_wp = atten_p.weight_split_dims_mapping
+      atten_wp.proj = ['data', 'mdl', None]
 
   if task_p.early_stopping_fn is None:
     task_p.early_stopping_fn = pax_fiddle.Config(EarlyStoppingFn)
@@ -1772,6 +1780,119 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanhChunk128(C4S
   TRANSPOSE = False
   LOOP_OVER_DYNAMIC_HD = True
   SUMMARY_VERBOSITY = 9
+  # _loophd run praxis@a929fe4
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanhQKNorm(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanhChunk128):
+  QK_NORM = True  # v4 0.159, rmsnorm 0.160
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  QUERY_CHUNK_SIZE = 128  # v4 0.16
+  TRANSPOSE = False
+  LOOP_OVER_DYNAMIC_HD = True
+  QK_NORM = True
+  SUMMARY_VERBOSITY = 9
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK = 4
+
+  LOGITS_USE_STATIC_W_EARLY = True
+  PROBS_USE_STATIC_W_EARLY = True
+  LOGITS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  PROBS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+  PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+
+  LOGITS_USE_STATIC_W = [True, False, False, False]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT_EARLY = [WeightInit.Gaussian(0.00012), None, None, None]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  NUM_EARLY_LAYERS = 2
+  NUM_LAYERS_PER_BLOCK = 2
+
+  PROJECT_LOGITS_EARLY = True
+  LOGITS_USE_STATIC_W_EARLY = True
+  PROBS_USE_STATIC_W_EARLY = True
+  LOGITS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  PROBS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+  DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbs(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf):
+  # NUM_EARLY_LAYERS = 0
+  NUM_LAYERS_PER_BLOCK = 1
+  
+  LOGITS_USE_STATIC_W = False
+  PROBS_USE_STATIC_W = True  # v4 w early_layers 0.171?, w/o early_layers 0.173?
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = WeightInit.Gaussian(0.00003)
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012)
+  # TRAINING_NUM_BATCHES_TO_SKIP = 0
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbsNoDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbs):
+  # NUM_EARLY_LAYERS = 0
+  PROJECT_LOGITS = False  # v4 w/o early_layers 0.184, w early_layers 0.182
+  PROBS_DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012)
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbsNoDDNoEarly(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbsNoDD):
+  NUM_EARLY_LAYERS = 0  # v3 w/o early_layers 0.160 vs OnlyProbsNoDD v4 0.184
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbs):
+  NUM_EARLY_LAYERS = 0
+  LOGITS_USE_STATIC_W = False
+  PROBS_USE_STATIC_W = False
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012)  # 0.215!
+
+@experiment_registry.register
+class C4SpmdLlamaXLBaseline(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfOnlyProbs):
+  NUM_EARLY_LAYERS = 0
+  PROJECT_LOGITS = False
+  PROJECT_PROBS = False  # 0.215
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfAligned(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf):
+  LOGITS_USE_STATIC_W = [True, False]  # v4 all dd 0.184!
+  PROBS_USE_STATIC_W = [True, False]
+  LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None]
+  # DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None]  # v4 half dd 0.184
+  # DYNAMIC_D_INIT = [None, None]
+  # TRAINING_NUM_BATCHES_TO_SKIP = 0
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfAlignedNoDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalfAligned):
+  DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormInterleaveda(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf):
+  LOGITS_USE_STATIC_W = [True, False]  # v4 all dd 0.178
+  PROBS_USE_STATIC_W = [False, True]
+  LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None]
+  PROBS_DYNAMIC_W_INIT = [None, WeightInit.Gaussian(0.00003)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormQuarter(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf):
+  PROJECT_LOGITS = False
+  LOGITS_USE_STATIC_W = [False, False]  # v3 0.172 vs HalfOnlyProbsNoDD v4 0.182
+  PROBS_USE_STATIC_W = [True, False]
+  LOGITS_DYNAMIC_W_INIT = [None, None]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None]
+  LOGITS_DYNAMIC_D_INIT = [None, None]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None]
 
 @experiment_registry.register
 class XXLResTHLogitsFFN2GELUDynWFFN8HD64Chunk128(C4SpmdLlamaXXL, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
@@ -1820,6 +1941,7 @@ class Llama7BResTHLogitsFFN2GELUDynWChunk(C4SpmdLlama7B, C4SpmdLlamaXLResTHLogit
   # rank2 0.159, rank2only 0.170, rank2only-dd 172, SW 0.198, SW+dd 0.193, ddonly 0.217/0.22?!, 
   # rank2loop 0.163, rank2looponly 0.168?, rank2looponly-dd 0.181
   # rank2 NoChunk 0.119 rank16 0.255/2=0.128 rank2probs 0.183
+  # btns 0.154
 
   # baseline 1/0.22 = 4.545
   # ran1only-dd 1/0.199 = +0.48 5.025
