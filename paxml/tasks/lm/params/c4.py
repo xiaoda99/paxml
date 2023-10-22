@@ -1795,6 +1795,10 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLR
   SUMMARY_VERBOSITY = 9
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  LOGITS_SQUEEZE_RATIO = None
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   NUM_EARLY_LAYERS = 4
   NUM_LAYERS_PER_BLOCK = 4
