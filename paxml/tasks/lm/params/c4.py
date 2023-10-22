@@ -1796,7 +1796,16 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLR
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
-  LOGITS_SQUEEZE_RATIO = None
+  LOGITS_SQUEEZE_RATIO = None  # v3 0.134
+
+@experiment_registry.register
+class C4SpmdLlamaXLFFN8192(C4SpmdLlamaXLHead16x128):
+  NUM_LAYERS = 21
+  HIDDEN_DIMS = 8192
+
+@experiment_registry.register
+class C4SpmdLlamaXLFFN8192ResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLFFN8192, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  pass
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
@@ -1810,7 +1819,7 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLR
   LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
   PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
 
-  LOGITS_USE_STATIC_W = [True, False, False, False]
+  LOGITS_USE_STATIC_W = [True, False, False, False]  # v3 0.148
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
   PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
