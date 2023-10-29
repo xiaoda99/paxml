@@ -231,7 +231,7 @@ def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
     replica, data, mdl = experiment_config.ICI_MESH_SHAPE
     # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
     experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
-      if mdl > 1 else [replica, data // 2, mdl]
+      if False and mdl > 1 else [replica, data // 2, mdl]
     experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
   return experiment_config
 

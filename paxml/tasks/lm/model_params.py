@@ -596,6 +596,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     else:
       model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = True
     model_p.lm_tpl.softmax_tpl.soft_cap_logits = self.SOFTMAX_CAP_LOGITS
+    model_p.lm_tpl.softmax_tpl.chunk_size = getattr(self, 'LM_HEAD_CHUNK_SIZE', None)
 
     if self.TRAINABLE_POSITION_EMB:
       model_p.lm_tpl.position_emb_tpl = pax_fiddle.Config(
@@ -624,6 +625,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
     )
     transformer_layer_p.tr_fflayer_tpl.use_gated_activation = (
         self.USE_GATED_ACTIVATION)
+    transformer_layer_p.tr_fflayer_tpl.chunk_size = getattr(self, 'FFN_CHUNK_SIZE', None)  # XD
     transformer_layer_p.tr_atten_tpl.dconv_qkv = self.ENABLE_DCONV
     # pytype: enable=attribute-error  # enable-nested-classes
 
@@ -641,9 +643,13 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       model_p.lm_tpl.early_stacked_transformer_tpl = pax_fiddle.Config(
           layers.StackedTransformerRepeated
       )
-      stacked_transformer_tpl.num_layers = 1
-      model_p.lm_tpl.early_stacked_transformer_tpl.block = stacked_transformer_tpl.clone()
-      model_p.lm_tpl.early_stacked_transformer_tpl.x_times = num_early_layers
+      num_layers_per_block = getattr(self, 'NUM_LAYERS_PER_BLOCK_EARLY', 1)
+      model_p.lm_tpl.early_stacked_transformer_tpl.block = \
+        stacked_transformer_tpl.clone().set(num_layers=num_layers_per_block)
+      assert num_early_layers % num_layers_per_block == 0, \
+        f'{num_early_layers} % {num_layers_per_block} != 0'
+      model_p.lm_tpl.early_stacked_transformer_tpl.x_times = \
+        num_early_layers // num_layers_per_block
       model_p.lm_tpl.early_stacked_transformer_tpl.checkpoint_policy = (
           self.CHECKPOINT_POLICY)
     if self.USE_REPEATED_LAYER:
@@ -655,7 +661,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       model_p.lm_tpl.stacked_transformer_tpl.block = stacked_transformer_tpl
       assert (self.NUM_LAYERS - num_early_layers) % num_layers_per_block == 0, \
         f'({self.NUM_LAYERS} - {num_early_layers}) % {num_layers_per_block} != 0'
-      model_p.lm_tpl.stacked_transformer_tpl.x_times = (self.NUM_LAYERS - num_early_layers) // num_layers_per_block  # XD
+      model_p.lm_tpl.stacked_transformer_tpl.x_times = \
+        (self.NUM_LAYERS - num_early_layers) // num_layers_per_block  # XD
       model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
           self.CHECKPOINT_POLICY)
     else:

@@ -432,7 +432,11 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
       # TODO(pax-team): Check if dst already exists?
       tf.io.gfile.rename(src, dst)
     else:
-      super()._delete_directory(step)
+      # super()._delete_directory(step)
+      try:
+        super()._delete_directory(step)
+      except Exception as e:  # XD
+        logging.error('Error deleting directory at step %d: %s', step, e)
 
   def structure(self) -> Union[Any, Mapping[str, Any]]:
     if self._checkpoint_type == CheckpointType.FLAX:

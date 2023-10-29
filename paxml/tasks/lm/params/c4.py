@@ -603,7 +603,7 @@ def configure_gpt3_task(
 
     dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
         'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
-        'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias',
+        'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias', 'decompose_dynamic_w',
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
         'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
         'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
@@ -625,6 +625,8 @@ def configure_gpt3_task(
         setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
     if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
       transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
+      if getattr(cls, 'WINDOW_SIZE', None) is not None:
+        transformer_layer_p.tr_atten_tpl.window_size = cls.WINDOW_SIZE
       for name in dynamic_w_attrs:
         NAME = name.upper()
         if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -977,11 +979,43 @@ class C4SpmdLlamaXXL(C4SpmdLlamaXL):
 
 @experiment_registry.register
 class C4SpmdLlama7B(C4SpmdLlamaXXL):
-  NUM_LAYERS = 32  # v4
+  MAX_SEQ_LEN = 2048
+  NUM_LAYERS = 32
   MODEL_DIMS = 4096
   HIDDEN_DIMS = 11008  # XD: MODEL_DIMS * 4 * 2 // 3
   NUM_HEADS = 32
   DIMS_PER_HEAD = 128
+  
+  LR_COS_WARMUP = 256
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 65536
+
+  # ICI_MESH_SHAPE = [1, 128, 1]  # v3-128 2048*8*64*2 0.048, 2048*4*128*1 OOM!
+  QUERY_CHUNK_SIZE = 128 * 4
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class C4SpmdLlama7BFFN16512:
+  NUM_LAYERS = 24
+  HIDDEN_DIMS = 16512
+
+@experiment_registry.register
+class C4SpmdLlama7B256x1(C4SpmdLlama7B):
+  PERCORE_BATCH_SIZE = 2 * 2 * 2
+  ICI_MESH_SHAPE = [1, 256, 1] # v4-256 2048*2*256*1 0.295, 1024*4*256*1 0.32
+
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [None, 128]  # v4 0.307
+
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512  # v4 NoWin PBS 8 chunk 512 0.09; Win128: PBS 4 chunk128/512/1024 0.171/0.174/0.175, PBS 8 chunk512 0.094, PBS 12 chunk512 0.06
+  # FFN_CHUNK_SIZE = 2752  # 0.087
+  EVAL_INTERVAL_STEPS = 100
+
+@experiment_registry.register
+class C4SpmdLlama7B64x4(C4SpmdLlama7B):
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 64, 4] # v4-256 2048*8*64*4 0.06, v4-256 1024*16*64*4 0.065
 
 @experiment_registry.register
 class C4SpmdLlamaMediumShareHeads(C4SpmdLlamaMedium):
@@ -1202,7 +1236,7 @@ class C4SpmdGPTXLSepEmb(C4SpmdGPTSepEmb, C4SpmdLlamaXLHead16x128):
   HIDDEN_DIMS = 8192  # v3 0.204
 
 @experiment_registry.register
-class C4SpmdLlamaXLNoSwiGLU(C4SpmdLlamaXLHead16x128):
+class C4SpmdLlamaXLNoSwiGLU:  # (C4SpmdLlamaXLHead16x128):
   ACTIVATION_CLS = layers.GELU
   USE_GATED_ACTIVATION = False  # v3 0.208 vs v4 merely 0.21 !?
   HIDDEN_DIMS = 8192
@@ -1788,15 +1822,91 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanhQKNorm(C4Spm
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
-  QUERY_CHUNK_SIZE = 128  # v4 0.16
+  QUERY_CHUNK_SIZE = 128  # v4 0.16, v3 0.132
   TRANSPOSE = False
   LOOP_OVER_DYNAMIC_HD = True
   QK_NORM = True
   SUMMARY_VERBOSITY = 9
 
 @experiment_registry.register
+class C4SpmdLlamaXLNoSwiGLUResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLNoSwiGLU, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  QK_NORM = False  # v3 0.138
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win128(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [None, 128]  # v3 0.148
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win128LHChunk128(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win128):
+  EMBEDDING_LOOKUP_STYLE = 'index' # v3 0.152
+  LM_HEAD_CHUNK_SIZE = 128  # v3 0.146
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'  # @200 v3 0.166
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK_EARLY = 4
+  WINDOW_SIZE = [None, 128, None, 128]
+  LOGITS_USE_STATIC_W_EARLY = True
+  PROBS_USE_STATIC_W_EARLY = True
+  LOGITS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  PROBS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+  PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+
+  NUM_LAYERS_PER_BLOCK = 4
+  WINDOW_SIZE = [None, 128, None, 128]  # v3 0.159
+  LOGITS_USE_STATIC_W = [False, False, False, True]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [None, None, None, WeightInit.Gaussian(0.00003)]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT = [None, None, None, WeightInit.Gaussian(0.00012)]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   LOGITS_SQUEEZE_RATIO = None  # v3 0.134
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHNG2DynWFFN8HD16(C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  ICI_MESH_SHAPE = [1, 32, 2]
+  NUM_GROUPS = 2  # v3 0.134
+  DYNAMIC_W_HIDDEN_DIM = 16
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHNG2DynWFFN4HD32(C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  ICI_MESH_SHAPE = [1, 32, 2]
+  NUM_GROUPS = 2  # v3 0.123!?
+  DYNAMIC_SQUEEZE_RATIO = 4
+  DYNAMIC_W_HIDDEN_DIM = 32
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynW0003FFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index' # @100 v3 0.140
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0003)  # v3 0.135
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0003)
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynWNoFFNHD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  DECOMPOSE_DYNAMIC_W = False  # v4 0.145 vs C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole v4 0.16
+  DYNAMIC_D_INIT = None
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynWNoFFNHD128DW1RmsNormWhole(C4SpmdLlamaXLResTHDynWNoFFNHD64DW1RmsNormWhole):
+  DYNAMIC_W_HIDDEN_DIM = 128  # v4 0.145
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynWNoFFNHD128DW1RmsNormWholeDD(C4SpmdLlamaXLResTHDynWNoFFNHD128DW1RmsNormWhole):
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00012)  # v4 0.145
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynWNoFFNHD256DW1RmsNormWhole(C4SpmdLlamaXLResTHDynWNoFFNHD64DW1RmsNormWhole):
+  DYNAMIC_W_HIDDEN_DIM = 256  # v4 0.144
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHDynWNoFFNDW1RmsNormWhole(C4SpmdLlamaXLResTHDynWNoFFNHD64DW1RmsNormWhole):
+  DYNAMIC_W_HIDDEN_DIM = None  # v4 0.145
 
 @experiment_registry.register
 class C4SpmdLlamaXLFFN8192(C4SpmdLlamaXLHead16x128):
@@ -1804,8 +1914,17 @@ class C4SpmdLlamaXLFFN8192(C4SpmdLlamaXLHead16x128):
   HIDDEN_DIMS = 8192
 
 @experiment_registry.register
+class C4SpmdLlamaXLFFN10880(C4SpmdLlamaXLHead16x128):
+  NUM_LAYERS = 17
+  HIDDEN_DIMS = 10880
+
+@experiment_registry.register
 class C4SpmdLlamaXLFFN8192ResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLFFN8192, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
-  pass
+  pass  # v3 0.152 vs C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole v3 0.132
+
+@experiment_registry.register
+class C4SpmdLlamaXLFFN10880ResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLFFN10880, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  pass  # v3 0.164
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
@@ -1823,8 +1942,14 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLR
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
   PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
-  LOGITS_DYNAMIC_D_INIT_EARLY = [WeightInit.Gaussian(0.00012), None, None, None]
+  LOGITS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None, None, None] # should be trained with this
+  # LOGITS_DYNAMIC_D_INIT_EARLY = [WeightInit.Gaussian(0.00012), None, None, None]  # actually be trained with this, so LOGITS_DYNAMIC_D is not used
   PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLFFN8192ResTHDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLFFN8192, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  NUM_EARLY_LAYERS = 1
+  LOGITS_SQUEEZE_RATIO = None  # v3
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormHalf(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
@@ -1936,6 +2061,56 @@ class XXLBaseline(C4SpmdLlamaXXL):
   SUMMARY_VERBOSITY = 9
   # QUERY_CHUNK_SIZE = 128
   # NoMLP  # v4 0.561
+
+@experiment_registry.register
+class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  NUM_GROUPS = 1  # v4 chunk128/256 0.202 chunk512 0.184, rank4 0.186
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
+  DYNAMIC_SQUEEZE_RATIO = 16 #// 2
+  DYNAMIC_W_HIDDEN_DIM = 128 #* 2
+  QUERY_CHUNK_SIZE = 128
+  # NUM_LAYERS_PER_BLOCK = 2
+  # WINDOW_SIZE = [None, 128]  # chunk128 0.231, win128 0.279
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Llama7B64x4DynWFFN8HD16Whole(C4SpmdLlama7B64x4, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  # NUM_GROUPS = 2  # v3 chunk128/256 0.03/0.029
+  NUM_GROUPS = 4  # v4 0.0418?
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+  QUERY_CHUNK_SIZE = 128
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Llama7B256x1DynWFFN16HD1281to4(Llama7B256x1DynWFFN16HD128Whole):
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK = 4  # v4 0.206 improvement so small vs Llama7B256x1DynWFFN16HD128Whole v4 0.202
+
+  LOGITS_USE_STATIC_W_EARLY = True
+  PROBS_USE_STATIC_W_EARLY = True
+  LOGITS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  PROBS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+  PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+
+  LOGITS_USE_STATIC_W = [True, False, False, False]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None, None, None]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class Llama7BFat256x1DynWFFN16HD128Whole(C4SpmdLlama7BFFN16512, Llama7B256x1DynWFFN16HD128Whole):
+  pass  # v4 0.226
+
+@experiment_registry.register
+class Llama7BFat256x1DynWFFN16HD1281to4(C4SpmdLlama7BFFN16512, Llama7B256x1DynWFFN16HD1281to4):
+  pass  # v4 0.229
 
 @experiment_registry.register
 class Llama7BResTHLogitsFFN2GELUDynWChunk(C4SpmdLlama7B, C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh):
