@@ -1247,6 +1247,12 @@ class C4SpmdLlamaXLMQA(C4SpmdLlamaXLHead16x128):
   HIDDEN_DIMS = 6784
 
 @experiment_registry.register
+class C4SpmdLlamaXLWin128(C4SpmdLlamaXLHead16x128):
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [None, 128]  # v3 0.211
+
+@experiment_registry.register
 class C4SpmdLlamaXL16x64(C4SpmdLlamaXL):
   NUM_HEADS = 16  # v3 0.201
   DIMS_PER_HEAD = 64
@@ -1843,6 +1849,18 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win128LHChunk128(C4SpmdLlamaXL
   LM_HEAD_CHUNK_SIZE = 128  # v3 0.146
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win256(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'  # @600 v3 0.150
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [None, 256]  # v3 0.143
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win384(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'  # v3 0.146
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [None, 384]
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   EMBEDDING_LOOKUP_STYLE = 'index'  # @200 v3 0.166
   NUM_EARLY_LAYERS = 4
@@ -1857,6 +1875,18 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128(C4SpmdLlamaXLResTHL
 
   NUM_LAYERS_PER_BLOCK = 4
   WINDOW_SIZE = [None, 128, None, 128]  # v3 0.159
+  LOGITS_USE_STATIC_W = [False, False, False, True]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [None, None, None, WeightInit.Gaussian(0.00003)]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT = [None, None, None, WeightInit.Gaussian(0.00012)]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128NoEarly(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  NUM_LAYERS_PER_BLOCK = 4
+  WINDOW_SIZE = [None, 128, None, 128]  #
   LOGITS_USE_STATIC_W = [False, False, False, True]
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [None, None, None, WeightInit.Gaussian(0.00003)]
