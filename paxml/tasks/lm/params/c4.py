@@ -991,7 +991,7 @@ class C4SpmdLlama7B(C4SpmdLlamaXXL):
   LR_COS_DECAY_END = 65536
 
   # ICI_MESH_SHAPE = [1, 128, 1]  # v3-128 2048*8*64*2 0.048, 2048*4*128*1 OOM!
-  QUERY_CHUNK_SIZE = 128 * 4
+  QUERY_CHUNK_SIZE = 128
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
@@ -1001,16 +1001,20 @@ class C4SpmdLlama7BFFN16512:
 
 @experiment_registry.register
 class C4SpmdLlama7B256x1(C4SpmdLlama7B):
-  PERCORE_BATCH_SIZE = 2 * 2 * 2
+  PERCORE_BATCH_SIZE = 2 * 2 #* 2
   ICI_MESH_SHAPE = [1, 256, 1] # v4-256 2048*2*256*1 0.295, 1024*4*256*1 0.32
 
   NUM_LAYERS_PER_BLOCK = 2
-  WINDOW_SIZE = [None, 128]  # v4 0.307
+  WINDOW_SIZE = [None, 256]  # v4 pbs4 lmchunk512 win128/256/384 0.1731/0.1750/0.1732 win256 is fastest!?
 
   EMBEDDING_LOOKUP_STYLE = 'index'
-  LM_HEAD_CHUNK_SIZE = 512  # v4 NoWin PBS 8 chunk 512 0.09; Win128: PBS 4 chunk128/512/1024 0.171/0.174/0.175, PBS 8 chunk512 0.094, PBS 12 chunk512 0.06
+  LM_HEAD_CHUNK_SIZE = 512  # v4 NoWin chunk 512 PBS4/8 0.166/0.09; Win128: PBS 4 chunk128/512/1024 0.171/0.174/0.175, PBS 8 chunk512 0.094, PBS 12 chunk512 0.06
   # FFN_CHUNK_SIZE = 2752  # 0.087
   EVAL_INTERVAL_STEPS = 100
+
+@experiment_registry.register
+class Pythia7B256x1(C4SpmdLlama7B256x1):
+  GPT_J_RESIDUAL = True  # v4 NoWin 0.1771, win256 0.1777
 
 @experiment_registry.register
 class C4SpmdLlama7B64x4(C4SpmdLlama7B):
@@ -1895,6 +1899,28 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128NoEarly(C4SpmdLlamaX
   PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win256(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK_EARLY = 4
+  WINDOW_SIZE_EARLY = [256, None, 256, None]
+  LOGITS_USE_STATIC_W_EARLY = True
+  PROBS_USE_STATIC_W_EARLY = True
+  LOGITS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  PROBS_DYNAMIC_W_INIT_EARLY = WeightInit.Gaussian(0.00003)
+  LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+  PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
+
+  NUM_LAYERS_PER_BLOCK = 4
+  WINDOW_SIZE = [256, None, 256, None]
+  LOGITS_USE_STATIC_W = [False, False, False, True]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [None, None, None, WeightInit.Gaussian(0.00003)]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT = [None, None, None, WeightInit.Gaussian(0.00012)]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   LOGITS_SQUEEZE_RATIO = None  # v3 0.134
 
@@ -1972,8 +1998,8 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm11to4(C4SpmdLlamaXLR
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
   PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
-  LOGITS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None, None, None] # should be trained with this
-  # LOGITS_DYNAMIC_D_INIT_EARLY = [WeightInit.Gaussian(0.00012), None, None, None]  # actually be trained with this, so LOGITS_DYNAMIC_D is not used
+  # LOGITS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), None, None, None] # should be trained with this
+  LOGITS_DYNAMIC_D_INIT_EARLY = [WeightInit.Gaussian(0.00012), None, None, None]  # actually be trained with this, so LOGITS_DYNAMIC_D is not used
   PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
 
 @experiment_registry.register
@@ -2094,14 +2120,15 @@ class XXLBaseline(C4SpmdLlamaXXL):
 
 @experiment_registry.register
 class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
-  NUM_GROUPS = 1  # v4 chunk128/256 0.202 chunk512 0.184, rank4 0.186
+  NUM_GROUPS = 1  # v4 pbs2 chunk128/256 0.202 chunk512 0.184, rank4 0.186; pbs4 0.108
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
   DYNAMIC_SQUEEZE_RATIO = 16 #// 2
   DYNAMIC_W_HIDDEN_DIM = 128 #* 2
   QUERY_CHUNK_SIZE = 128
   # NUM_LAYERS_PER_BLOCK = 2
-  # WINDOW_SIZE = [None, 128]  # chunk128 0.231, win128 0.279
+  # # WINDOW_SIZE = [None, 128]  # pbs2 chunk128 0.231, win128 0.279
+  # WINDOW_SIZE = [None, 256]  # pbs4 win128/256/384 0.1276/0.1267/0.123
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
@@ -2116,9 +2143,15 @@ class Llama7B64x4DynWFFN8HD16Whole(C4SpmdLlama7B64x4, C4SpmdLlamaXLResTHDynWFFN8
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
+class Pythia7B256x1DynWFFN16HD128Whole(Llama7B256x1DynWFFN16HD128Whole):
+  # pbs4
+  GPT_J_RESIDUAL = True  # v4 NoWin 0.109
+
+@experiment_registry.register
 class Llama7B256x1DynWFFN16HD1281to4(Llama7B256x1DynWFFN16HD128Whole):
-  NUM_EARLY_LAYERS = 4
-  NUM_LAYERS_PER_BLOCK = 4  # v4 0.206 improvement so small vs Llama7B256x1DynWFFN16HD128Whole v4 0.202
+  # NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK = 4  # v4 pbs2 0.206 improvement so small vs Llama7B256x1DynWFFN16HD128Whole v4 0.202
+  # NoEarly v4 pbs4 NoWin 0.xxxx vs Whole 0.108, win256 0.1328 vs Whole 0.1267 little faster
 
   LOGITS_USE_STATIC_W_EARLY = True
   PROBS_USE_STATIC_W_EARLY = True
@@ -2127,6 +2160,7 @@ class Llama7B256x1DynWFFN16HD1281to4(Llama7B256x1DynWFFN16HD128Whole):
   LOGITS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
   PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
 
+  WINDOW_SIZE = [None, 256, None, 256]
   LOGITS_USE_STATIC_W = [True, False, False, False]
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
