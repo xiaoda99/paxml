@@ -538,8 +538,10 @@ def configure_gpt3_task(
   model_p.decoder_tpl.seqlen = cls.MAX_SEQ_LEN  # pytype: disable=attribute-error  # enable-nested-classes
 
   if getattr(cls, 'EXPLICIT_INIT', True):  # XD
-    model_p.params_init = WeightInit.Gaussian(0.006)
-    softmax_init = WeightInit.Gaussian(0.006)
+    std = math.sqrt(2 / (5 * cls.MODEL_DIMS)) \
+      if getattr(cls, 'INIT_METHOD', None) == 'small_init' else 0.006  # XD
+    model_p.params_init = WeightInit.Gaussian(std)
+    softmax_init = WeightInit.Gaussian(std)
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init
   else:  # XD: same as TransformerLmSpmdAdafactor
     softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(cls.MODEL_DIMS))
@@ -586,6 +588,11 @@ def configure_gpt3_task(
     transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
     transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
     transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
+    if hasattr(cls, 'MERGE_DW_PROJ'): transformer_layer_p.tr_atten_tpl.merge_dw_proj = cls.MERGE_DW_PROJ  # XD
+    if getattr(cls, 'OUTPUT_LAYER_INIT_METHOD', None) == 'wang_init':  # XD
+      output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS))
+      transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_std
+      transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -992,7 +999,22 @@ class C4SpmdLlama7B(C4SpmdLlamaXXL):
 
   # ICI_MESH_SHAPE = [1, 128, 1]  # v3-128 2048*8*64*2 0.048, 2048*4*128*1 OOM!
   QUERY_CHUNK_SIZE = 128
-  SUMMARY_INTERVAL_STEPS = 5
+  SUMMARY_INTERVAL_STEPS = 10
+
+@experiment_registry.register
+class Pythia7B(C4SpmdLlama7B):
+  USE_BIAS = True
+  NORMALIZATION_CLS = normalizations.LayerNorm
+  ACTIVATION_CLS = layers.GELU
+  USE_GATED_ACTIVATION = False
+  HIDDEN_DIMS = 16384
+  GPT_J_RESIDUAL = True
+
+  LEARNING_RATE = 1.2e-4
+  WEIGHT_DECAY = 0.01
+  LR_COS_WARMUP = 1430
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 143000
 
 @experiment_registry.register
 class C4SpmdLlama7BFFN16512:
@@ -1000,17 +1022,44 @@ class C4SpmdLlama7BFFN16512:
   HIDDEN_DIMS = 16512
 
 @experiment_registry.register
+class C4SpmdLlama7B128x1(C4SpmdLlama7B):
+  PERCORE_BATCH_SIZE = 2 * 2 * 2
+  ICI_MESH_SHAPE = [1, 128, 1]  # v3 pbs8 0.0519, v4 pbs8 0.0900
+  # ICI_MESH_SHAPE = [1, 64, 2]  # v3 pbs8 win256 0.0487, v4 error
+  # ICI_MESH_SHAPE = [1, 32, 4]  # v3 pbs8 win256 0.0448, v4 0.0612
+  # NUM_LAYERS_PER_BLOCK = 2
+  # WINDOW_SIZE = [256, None]  # v3 pbs4/8 0.0997/0.0528, v4 pbs8 0.0959!
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512
+
+@experiment_registry.register
 class C4SpmdLlama7B256x1(C4SpmdLlama7B):
   PERCORE_BATCH_SIZE = 2 * 2 #* 2
   ICI_MESH_SHAPE = [1, 256, 1] # v4-256 2048*2*256*1 0.295, 1024*4*256*1 0.32
+  QUERY_CHUNK_SIZE = 128   # v4 pbs4 NoWin chunk 64/256  0.155/0.168
 
-  NUM_LAYERS_PER_BLOCK = 2
-  WINDOW_SIZE = [None, 256]  # v4 pbs4 lmchunk512 win128/256/384 0.1731/0.1750/0.1732 win256 is fastest!?
+  # NUM_LAYERS_PER_BLOCK = 2
+  # WINDOW_SIZE = [None, 256]  # v4 pbs2 0.319; pbs4 lmchunk512 win128/256/384 0.1731/0.1750/0.1732 win256 is fastest!?; pbs8 win256 0.095 little faster than NoWin (0.094)
 
   EMBEDDING_LOOKUP_STYLE = 'index'
   LM_HEAD_CHUNK_SIZE = 512  # v4 NoWin chunk 512 PBS4/8 0.166/0.09; Win128: PBS 4 chunk128/512/1024 0.171/0.174/0.175, PBS 8 chunk512 0.094, PBS 12 chunk512 0.06
   # FFN_CHUNK_SIZE = 2752  # 0.087
-  EVAL_INTERVAL_STEPS = 100
+
+@experiment_registry.register
+class Pythia7B128x1(Pythia7B):
+  PERCORE_BATCH_SIZE = 2 * 2 * 2
+  ICI_MESH_SHAPE = [1, 128, 1]  # v3 win256 0.0525, v4 win256 0.0972
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512
+
+class PythiaInit:
+  INIT_METHOD = 'small_init'
+  OUTPUT_LAYER_INIT_METHOD = 'wang_init'
+
+@experiment_registry.register
+class Pythia7B128x1PythiaInit(PythiaInit, Pythia7B128x1): pass  # v4 0.0972
 
 @experiment_registry.register
 class Pythia7B256x1(C4SpmdLlama7B256x1):
@@ -1859,6 +1908,12 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win256(C4SpmdLlamaXLResTHLogit
   WINDOW_SIZE = [None, 256]  # v3 0.143
 
 @experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win256Rev(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'  # v3 MI/IM 0.1496/0.1496, merge_dw_proj MI/IM 0.1506/0.1506
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+
+@experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64Win384(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   EMBEDDING_LOOKUP_STYLE = 'index'  # v3 0.146
   NUM_LAYERS_PER_BLOCK = 2
@@ -1901,7 +1956,7 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win128NoEarly(C4SpmdLlamaX
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win256(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
   EMBEDDING_LOOKUP_STYLE = 'index'
-  NUM_EARLY_LAYERS = 4
+  NUM_EARLY_LAYERS = 4  # v3 0.156
   NUM_LAYERS_PER_BLOCK_EARLY = 4
   WINDOW_SIZE_EARLY = [256, None, 256, None]
   LOGITS_USE_STATIC_W_EARLY = True
@@ -1918,6 +1973,18 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win256(C4SpmdLlamaXLResTHL
   LOGITS_DYNAMIC_W_INIT = [None, None, None, WeightInit.Gaussian(0.00003)]
   PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
   LOGITS_DYNAMIC_D_INIT = [None, None, None, WeightInit.Gaussian(0.00012)]
+  PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD641to4Win256NoEarly(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole):
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  NUM_LAYERS_PER_BLOCK = 4  # v3 0.166
+  WINDOW_SIZE = [256, None, 256, None]
+  LOGITS_USE_STATIC_W = [False, True, False, False]
+  PROBS_USE_STATIC_W = [True, True, True, True]
+  LOGITS_DYNAMIC_W_INIT = [None, WeightInit.Gaussian(0.00003), None, None]
+  PROBS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003), WeightInit.Gaussian(0.00003)]
+  LOGITS_DYNAMIC_D_INIT = [None, WeightInit.Gaussian(0.00012), None, None]
   PROBS_DYNAMIC_D_INIT = [WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012), WeightInit.Gaussian(0.00012)]
 
 @experiment_registry.register
@@ -2119,16 +2186,84 @@ class XXLBaseline(C4SpmdLlamaXXL):
   # NoMLP  # v4 0.561
 
 @experiment_registry.register
-class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
-  NUM_GROUPS = 1  # v4 pbs2 chunk128/256 0.202 chunk512 0.184, rank4 0.186; pbs4 0.108
+class Llama7B128x1DynWFFN16HD128Whole(C4SpmdLlama7B128x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  ICI_MESH_SHAPE = [1, 128, 1]
+  NUM_GROUPS = 1
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
   DYNAMIC_SQUEEZE_RATIO = 16 #// 2
   DYNAMIC_W_HIDDEN_DIM = 128 #* 2
   QUERY_CHUNK_SIZE = 128
-  # NUM_LAYERS_PER_BLOCK = 2
-  # # WINDOW_SIZE = [None, 128]  # pbs2 chunk128 0.231, win128 0.279
-  # WINDOW_SIZE = [None, 256]  # pbs4 win128/256/384 0.1276/0.1267/0.123
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]  # SEP_DW_PROJ v3 error!?, v4 0.0648
+  MERGE_DW_PROJ = True # v3 0.0338, v4 0.0650
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Llama7BNG4DynWFFN8HD64Whole(C4SpmdLlama7B128x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  ICI_MESH_SHAPE = [1, 128, 1]  # v3 oom shard_dw_proj oom; v4 0.0628 shard_dw_proj 0.0647!? rank2 shard_dw_proj 0.0554
+  # ICI_MESH_SHAPE = [1, 32, 4]  # v3 0.0346 shard_dw_proj 0.0346, v4 oom!? shard_dw_proj oom
+  NUM_GROUPS = 4
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
+  DYNAMIC_SQUEEZE_RATIO = 8 #// 2
+  DYNAMIC_W_HIDDEN_DIM = 64 #* 2
+  QUERY_CHUNK_SIZE = 128
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  MERGE_DW_PROJ = True
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Pythia7B128x1DynWFFN16HD128Win256(Pythia7B128x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0001)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 128  # v4 0.0693
+  QUERY_CHUNK_SIZE = 128
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  MERGE_DW_PROJ = True
+  # SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Pythia7B128x1NG2DynWFFN8HD128Win256(Pythia7B128x1DynWFFN16HD128Win256):
+  ICI_MESH_SHAPE = [1, 128, 1]  # v3 0.0356
+  # ICI_MESH_SHAPE = [1, 64, 2]  # v3 0.0356
+  # ICI_MESH_SHAPE = [1, 32, 4]  # v3 oom???
+  NUM_GROUPS = 2
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 128
+  # SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class Pythia7B128x1NG4DynWFFN8HD64Win256(Pythia7B128x1DynWFFN16HD128Win256):
+  NUM_GROUPS = 4
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 64  # v4 0.0697
+
+@experiment_registry.register
+class Pythia7B128x1NG4DynWFFN4HD128Win256(Pythia7B128x1DynWFFN16HD128Win256):
+  NUM_GROUPS = 4
+  DYNAMIC_SQUEEZE_RATIO = 4
+  DYNAMIC_W_HIDDEN_DIM = 128
+
+@experiment_registry.register
+class Pythia7B128x1DynWFFN8HD256Win256(Pythia7B128x1DynWFFN16HD128Win256):
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 256  # v3/v4 oom
+
+@experiment_registry.register
+class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  NUM_GROUPS = 1  # v4 pbs2 chunk128/256 0.202 (vs baseline 0.295, +46%) chunk512 0.184, rank4 0.186; pbs4 0.108 (vs baseline 0.166, +53.7%!); pbs8 0.0554 (vs baseline 0.09, +62.5%)
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.025, total_scale = 0.02
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0002) # sqrt(2 / (D + M * 2)) * 0.01, total_scale = 0.02
+  DYNAMIC_SQUEEZE_RATIO = 16 #// 2
+  DYNAMIC_W_HIDDEN_DIM = 128 #* 2
+  QUERY_CHUNK_SIZE = 128   # pbs4 NoWin chunk64/256 0.103/0.1038
+  NUM_LAYERS_PER_BLOCK = 2
+  # WINDOW_SIZE = [None, 128]  # pbs2 chunk128 0.231, win128 0.279
+  WINDOW_SIZE = [None, 256]  # pbs2 win 256 ~0.237 unstable (vs baseline 0.319 +34.6); pbs4 win128/256/384 0.1276/0.1267/0.123 (vs baseline win256 0.1750, +38%); pbs8 win256 0.0647 (vs baseline 0.095, +46.8%)
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
@@ -2151,7 +2286,7 @@ class Pythia7B256x1DynWFFN16HD128Whole(Llama7B256x1DynWFFN16HD128Whole):
 class Llama7B256x1DynWFFN16HD1281to4(Llama7B256x1DynWFFN16HD128Whole):
   # NUM_EARLY_LAYERS = 4
   NUM_LAYERS_PER_BLOCK = 4  # v4 pbs2 0.206 improvement so small vs Llama7B256x1DynWFFN16HD128Whole v4 0.202
-  # NoEarly v4 pbs4 NoWin 0.xxxx vs Whole 0.108, win256 0.1328 vs Whole 0.1267 little faster
+  # NoEarly v4 pbs4 NoWin 0.1072 vs Whole 0.108 slower!?, win256 0.1328 vs Whole 0.1267 little faster
 
   LOGITS_USE_STATIC_W_EARLY = True
   PROBS_USE_STATIC_W_EARLY = True
@@ -2161,6 +2296,7 @@ class Llama7B256x1DynWFFN16HD1281to4(Llama7B256x1DynWFFN16HD128Whole):
   PROBS_DYNAMIC_D_INIT_EARLY = WeightInit.Gaussian(0.00012)
 
   WINDOW_SIZE = [None, 256, None, 256]
+  # WINDOW_SIZE = [None, None, None, None]
   LOGITS_USE_STATIC_W = [True, False, False, False]
   PROBS_USE_STATIC_W = [True, True, True, True]
   LOGITS_DYNAMIC_W_INIT = [WeightInit.Gaussian(0.00003), None, None, None]
