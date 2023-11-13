@@ -226,6 +226,10 @@ def get_tpu_type(exp_name):  # XD
   elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
   else: return exp_name, 'v3'
 
+def append_zone(gs_path, tpu_type):
+  return gs_path.replace('common_datasets',
+    f'common_datasets_{global_cfg.tputype2zone[tpu_type]}')
+
 def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
   if tpu_type == 'v4':
     replica, data, mdl = experiment_config.ICI_MESH_SHAPE
@@ -233,6 +237,9 @@ def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
     experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
       if False and mdl > 1 else [replica, data // 2, mdl]
     experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
+    if getattr(experiment_config, 'DATA_PATH', None) is not None;
+      experiment_config.DATA_PATH = {split: append_zone(path, tpu_type)
+        for split, path in experiment_config.DATA_PATH.items()}
   return experiment_config
 
 @py_utils.benchmark('[PAX STATUS]: ')
@@ -259,12 +266,9 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
   # XD
   experiment_name, tpu_type = get_tpu_type(experiment_name)
   if tpu_type in global_cfg.tputype2zone:
-    def append_zone(gs_path):
-      return gs_path.replace('common_datasets',
-        f'common_datasets_{global_cfg.tputype2zone[tpu_type]}')
-    global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH)
-    global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR)
-    global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR)
+    global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH, tpu_type)
+    global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR, tpu_type)
+    global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR, tpu_type)
   if tpu_type in ['v4', 'v5']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:

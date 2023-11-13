@@ -27,7 +27,7 @@ from paxml import checkpoint_types
 from paxml import checkpoint_version
 from praxis import pytypes
 
-
+SKIP_STEP_NAME = 'skip_file_and_step.json'
 _CHECKPOINT_PREFIX = 'checkpoint'
 CHECKPOINT_PREFIX = f'{_CHECKPOINT_PREFIX}_'
 _STEP_FORMAT_FIXED_LENGTH = 8

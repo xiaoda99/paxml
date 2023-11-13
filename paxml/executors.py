@@ -42,6 +42,7 @@ from praxis import py_utils
 import tensorflow.compat.v2 as tf
 
 from paxml import checkpoints  # mapped to internal
+import mlxu
 
 instantiate = base_hyperparams.instantiate
 RunningMode = trainer_lib.RunningMode
@@ -235,6 +236,7 @@ class DefaultExecutor(base_executor.BaseExecutor):
           train_state_metadata,
           root_prng_key,
           train_input_for_checkpoint,
+          return_opt=False if jax_task.only_eval else True, # lsp
       )
     logging.info(
         '[PAX STATUS]: Checkpoint load / variable init took %d seconds',
@@ -301,6 +303,27 @@ class DefaultExecutor(base_executor.BaseExecutor):
       program.shutdown()
     logging.info('[PAX STATUS]: Executor shutdown complete.')
 
+import os, json
+from paxml import checkpoint_paths
+
+
+def record_file_and_step(step, save_dir, train_input):
+    fill_step = checkpoint_paths.CHECKPOINT_PREFIX + str(step).zfill(checkpoint_paths._STEP_FORMAT_FIXED_LENGTH)
+    save_path = os.path.join(save_dir, 'checkpoints', fill_step, f'{checkpoint_paths.SKIP_STEP_NAME}')
+    save_newest_path = os.path.join(save_dir, 'checkpoints', f'{checkpoint_paths.SKIP_STEP_NAME}')
+    if not hasattr(train_input, 'meta_dict'):
+        return
+    meta_dict = train_input.meta_dict
+    # if train_input._peek is not None and step > 0: meta_dict['step_in_file'] -= 1
+    meta_dict['step_in_file'] = train_input.step_in_file - int(train_input._peek is not None)
+    assert meta_dict['step_in_file'] >= 0, f"{meta_dict['step_in_file']}"
+    meta_dict['checkpoint_step'] = step
+    if jax.process_index() == 0:
+        with mlxu.open_file(save_path, 'w') as f1, mlxu.open_file(save_newest_path, 'w') as f2:
+            json.dump(meta_dict, f1)
+            json.dump(meta_dict, f2)
+    logging.info(f'Save skip_file_and_step successful... file_in_data: {meta_dict["file_in_data"]} || step_in_file: {meta_dict["step_in_file"]}')  # XD
+
 
 def _train_and_evaluate_common(
     *,
@@ -324,6 +347,28 @@ def _train_and_evaluate_common(
     exit_after_ondemand_checkpoint,
 ):
   """Training loop code common to both pmap and spmd."""
+  # lsp
+  for program in eval_programs:
+    program.setup(task, partitioner, job_log_dir, eval_prng_seed)
+
+  for program in decode_programs:
+    program.setup(task, partitioner, job_log_dir, decode_prng_seed)
+
+  if task.only_eval:
+    # lsp: 仅仅获取模型参数,mdl_vars
+    eval_partitioned_train_state = programs.get_eval_train_state(
+                task, partitioned_train_state, task.train.eval_use_ema_states
+            )
+    assert eval_programs
+    logging.debug("[PAX STATUS]:  Running eval programs.")
+    eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
+            eval_programs=eval_programs,
+            train_state=eval_partitioned_train_state,
+            step=eval_partitioned_train_state.step,
+        )
+    logging.info(f'eval_metrics: {eval_metrics}')
+    exit(0)
+
   train_p = task.train
   train_state_metadata = partitioner.get_train_state_metadata()
   train_input_for_checkpoint = (
@@ -354,10 +399,6 @@ def _train_and_evaluate_common(
       eval_prng_seed,
       step_i,
   )
-  for program in eval_programs:
-    program.setup(task, partitioner, job_log_dir, eval_prng_seed)
-  for program in decode_programs:
-    program.setup(task, partitioner, job_log_dir, decode_prng_seed)
   trainer_lib.check_unique_names([p.eval_input for p in eval_programs])
   trainer_lib.check_unique_names([p.decode_input for p in decode_programs])
 
@@ -385,13 +426,17 @@ def _train_and_evaluate_common(
   gc.freeze()
   while True:
     logging.log_first_n(INFO, '[PAX STATUS]: Beginning step `%d`.', 5, step_i)
-    checkpointer.save_if_needed(
-        step_i,
-        partitioned_train_state,
-        train_state_metadata.unpadded_global_shapes,
-        train_state_metadata.partition_specs,
-        train_input_for_checkpoint,
-    )
+    save_or_pass = checkpointer.save_if_needed(
+            step_i,
+            partitioned_train_state,
+            train_state_metadata.unpadded_global_shapes,
+            train_state_metadata.partition_specs,
+            train_input_for_checkpoint,
+        )
+    # # lsp
+    if save_or_pass:
+        record_file_and_step(step=step_i, save_dir=job_log_dir, train_input=train_program._train_input)
+    
     if exit_after_ondemand_checkpoint and checkpointer.reached_preemption(
         step_i
     ):

@@ -18,11 +18,9 @@
 import functools
 import math
 from typing import Dict, List, Optional
-import numpy as np
 
 from absl import logging
 import fiddle as fdl
-import tensorflow as tf
 import jax
 from jax import numpy as jnp
 from paxml import base_experiment
@@ -39,7 +37,6 @@ from praxis import layers
 from praxis import optimizers
 from praxis import pax_fiddle
 from praxis import schedules
-from praxis import py_utils
 from praxis.layers import normalizations  # XD
 from praxis.layers import activations  # XD
 from praxis.layers import transformers
@@ -47,12 +44,13 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
-from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step  # XD fix
 
 WeightInit = base_layer.WeightInit
-NestedMap = py_utils.NestedMap
 
-GPT_SPM_PATH = global_cfg.GPT_SPM_PATH 
+GPT_SPM_PATH = global_cfg.GPT_SPM_PATH #(  XD
+#     'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD
+#     # 'gs://mlperf-llm-public2/vocab/c4_en_301_5Mexp2_spm.model'
+# )
 GPT_EOS_ID = 1
 GPT_VOCABULARY = t5.data.SentencePieceVocabulary(GPT_SPM_PATH)
 PASS_THROUGH_VOCABULARY = t5.data.PassThroughVocabulary(size=50257)
@@ -175,46 +173,6 @@ TaskRegistry.add_versioned_tfds_task(
     shuffle_buffer_size=None,
 )
 
-# lsp
-@experiment_registry.register
-class DataParams():
-    LOAD_SEQIO_ID = False
-    LOAD_SEQIO_TEXT = True
-    TRAINING_NUM_BATCHES_TO_SKIP = None
-    TEST_BATCH_RATIO = 0.02
-    SHUFFLE = {"train": True, "test": False}
-    SHUFFLE_SIZE = 10000
-    MAX_SEQ_LEN = 2048
-    # default
-    KEY_MAP = {"inputs": None, "targets": "text"}
-    VOCAB_FILE = 'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'
-    VOCABULARY = t5.data.SentencePieceVocabulary(VOCAB_FILE)
-    DATA_PATH = {
-                'train': 'gs://common_datasets/', 
-                'test':  'gs://common_datasets/', 
-                }
-    TASK_NAME = 'DataParams'
-    DATA_FUNC = c4_registry
-
-class PileDataParams(DataParams):
-  EVAL_LOOP_NUM_BATCHES = 50
-  MAX_SEQ_LEN = 2049
-  VOCAB_SIZE = 50432
-  LOAD_SEQIO_TEXT = False
-  LOAD_SEQIO_ID = False
-  SHUFFLE = {'train': False, 'test': False}
-  VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-              'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
-              'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecord',
-              }
-  DATA_FUNC = extract_pythia_datapath
-
-class SeqioPileDataParams(PileDataParams):
-  LOAD_SEQIO_ID = False
-  TASK_NAME = 'pythia'
-  DATA_FUNC = tfids_registry
 
 class C4UnsupervisedDataset(base_experiment.BaseExperiment):
   """Used for training Baseline ULM."""
@@ -225,15 +183,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
   TRAINING_NUM_BATCHES_TO_SKIP = None
 
   def _dataset_common(
-      self, is_training,
-      job_log_dir=None
+      self, is_training
   ) -> pax_fiddle.Config[base_input.BaseInput]:
-    LOAD_SEQIO_ID = getattr(self, 'LOAD_SEQIO_ID', False)  # XD fix
-    LOAD_SEQIO_TEXT = getattr(self, 'LOAD_SEQIO_TEXT', True)  # XD fix
-    if not LOAD_SEQIO_ID and not LOAD_SEQIO_TEXT:  # XD fix
-      meta_dict = extract_train_skip_step(job_log_dir=job_log_dir, step=self.TRAINING_NUM_BATCHES_TO_SKIP)
-      num_batches_to_skip = meta_dict.get('checkpoint_step', self.TRAINING_NUM_BATCHES_TO_SKIP)
-
     if is_training:
       percore_batch_size = self.PERCORE_BATCH_SIZE
     else:
@@ -254,6 +205,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
       num_infeed_hosts = global_batch_size // batch_size_per_process
     else:
       if jax.process_count() > 1:
+        # assert global_batch_size % num_local_devices == 0  # XD: bug?
+        # batch_size_per_process = num_local_devices  # XD: bug?
         batch_size_per_process = int(
             percore_batch_size * num_local_devices + 1e-6
         )
@@ -263,102 +216,52 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             percore_batch_size * num_local_devices + 1e-6
         )
         num_infeed_hosts = 1
+    # batch_size_per_process, num_infeed_hosts = 4, 2  # XD
     seed = None
     if is_training:
       seed = self.TRAINING_SEED
+      # TODO(sgpyc): enable sync of seeds across hosts, currently the
+      # following failed because of "sync_global_devices name mismatch"
+      # seed = jnp.int32(multihost_utils.broadcast_one_to_all(seed))
       logging.info('Train input seed: %s',
                    'None' if seed is None else seed)
-    # lsp
-    if LOAD_SEQIO_ID:
-        logging.info(f"Load seqio id data......")
-        DataFeature = seqio_input.MyLanguageModelFeatures
-        DataFeature.MAX_SEQ_LEN = self.MAX_SEQ_LEN
-        # train test shuffle flag
-        shuffle = self.SHUFFLE["train"] if is_training else self.SHUFFLE["test"]
-        mixture_name = f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test"
-        name = "sft_train" if is_training else "sft_test"
-        split_name = "train" if is_training else "test"
-        task_feature_lengths = {
-            "targets": self.MAX_SEQ_LEN,
-            "masks": self.MAX_SEQ_LEN,
-        }
-        print(f"is_training: {is_training} shuffle: {shuffle}")
-    elif LOAD_SEQIO_TEXT:
-        logging.info(f"Load seqio text data......")
-        DataFeature = seqio_input.LanguageModelFeatures
-        # mixture_name = "c4.train" if is_training else "c4.test"  # XD fix
+    p = pax_fiddle.Config(
+        seqio_input.SeqIOInput,
+        name='C4Train' if is_training else 'C4Validation',
         mixture_name='c4_lm_v301_gpt'
-        name = "C4Train" if is_training else "C4Validation"
-        split_name = "train" if is_training else "validation"
-        task_feature_lengths = {"targets": self.MAX_SEQ_LEN}
-        shuffle = None
-    else:
-        logging.info(f"Load mesh id data......")
-        shuffle_key = "train" if is_training else "test"
-        shuffle_buffer_size = self.SHUFFLE_SIZE if self.SHUFFLE[shuffle_key] else None
-
-    # print(f'is_training: {is_training}')  # XD fix
-    mode='train' if is_training else 'test'
-    DATA_PATH = self.DATA_FUNC(mode=mode) \
-      if getattr(self, 'DATA_FUNC', None) is not None else None
-    if LOAD_SEQIO_ID or LOAD_SEQIO_TEXT:
-        # lsp
-        num_batches_to_skip = getattr(self, 'TRAINING_NUM_BATCHES_TO_SKIP', None)  # XD fix
-        assert DATA_PATH is None, print(f'Please check data params: “LOAD_SEQIO_TEXT“ or “LOAD_SEQIO_ID ” set...')
-        p = pax_fiddle.Config(
-            seqio_input.SeqIOInput,
-            name=name,
-            mixture_name=mixture_name,
-            split_name=split_name,
-            task_feature_lengths=task_feature_lengths,
-            use_cached=False,
-            shuffle=shuffle,
-            repeat=True if is_training else False,
-            feature_converter=DataFeature(
-                pack=True if is_training else False,
-                use_custom_packing_ops=False,
-                bos_id=0,
-                reverse_bos_padding=True,
-                eos_id=GPT_EOS_ID,
-            ),
-            is_training=is_training,
-            input_random_seed=(seed if is_training else 4321),
-            # batch_size=int(batch_size_per_process),  # lsp
-            batch_size=batch_size_per_process,  # XD fix
-            drop_remainder=True if is_training else False,
-            num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
-            num_infeed_hosts=num_infeed_hosts,
-            # reset_for_eval=False if is_training else True, # eval的时候为True
-            reset_for_eval=False,  # eval的时候为True -> False  # XD fix ???
-            annotate_padding_fields=True,
-            eval_loop_num_batches=getattr(self, 'EVAL_LOOP_NUM_BATCHES', 1),  # XD fix
-        )
-    else:
-        assert isinstance(DATA_PATH, dict)
-        p = pax_fiddle.Config(
-            MyDatasets,
-            # name=f"{self.TASK_NAME}.train" if is_training else f"{self.TASK_NAME}.test",
-            path=DATA_PATH["train"] if is_training else DATA_PATH["test"],
-            is_training=is_training,
-            meta_dict=meta_dict,
-            batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
-            seq_len=self.MAX_SEQ_LEN,
-            reset_for_eval=False,
-            repeat=3 if is_training else 3 * 30,
-            eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
-            train_seed=self.TRAINING_SEED,
-            task_features=list(self.KEY_MAP.values()),
-            shuffle_buffer_size=shuffle_buffer_size,
-            num_batches_to_skip=num_batches_to_skip,
-        )
+        if True or is_training # XD
+        else 'c4_lm_v301_gpt_eval_tokenized',
+        # split_name='train2' if is_training else 'validation_tokenized_5662seqs',
+        split_name='train' if is_training else 'validation',  # XD for 3.0.1
+        # mixture_name='rotten_tomatoes_lm_gpt', split_name='train',  # XD
+        task_feature_lengths={'targets': self.MAX_SEQ_LEN},
+        use_cached=False,
+        repeat=True if is_training else False,
+        feature_converter=seqio_input.LanguageModelFeatures(
+            pack=True if is_training else False,
+            use_custom_packing_ops=False,
+            bos_id=0,
+            reverse_bos_padding=True,
+            eos_id=GPT_EOS_ID,
+        ),
+        is_training=is_training,
+        input_random_seed=(seed if is_training else 4321),
+        batch_size=batch_size_per_process,
+        drop_remainder=True if is_training else False,
+        num_batches_to_skip=self.TRAINING_NUM_BATCHES_TO_SKIP,
+        num_infeed_hosts=num_infeed_hosts,
+        reset_for_eval=False if is_training else True,
+        annotate_padding_fields=True,
+    )
     return p
 
-  def datasets(self, job_log_dir=None) -> List[pax_fiddle.Config[base_input.BaseInput]]:
+  def datasets(self) -> List[pax_fiddle.Config[base_input.BaseInput]]:
     """Returns a list of dataset parameters."""
     return [
-        self._dataset_common(is_training=True, job_log_dir=job_log_dir),
+        self._dataset_common(is_training=True),
         self._dataset_common(is_training=False)
     ]
+
 
 def set_adam_and_learning_rate_schedule(
     cls,
@@ -1107,45 +1010,11 @@ class Pythia7B(C4SpmdLlama7B):
   HIDDEN_DIMS = 16384
   GPT_J_RESIDUAL = True
 
-  QUERY_CHUNK_SIZE = 128
-  EMBEDDING_LOOKUP_STYLE = 'index'
-  LM_HEAD_CHUNK_SIZE = 512
-
   LEARNING_RATE = 1.2e-4
   WEIGHT_DECAY = 0.01
   LR_COS_WARMUP = 1430
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 143000
-
-@experiment_registry.register
-class Pythia410M(C4SpmdLlama7B):  # TODO: C4SpmdLlama7B -> Pythia7B
-  NUM_LAYERS = 24
-  MODEL_DIMS = 1024
-  NUM_HEADS = 16
-  DIMS_PER_HEAD = 64
-  HIDDEN_DIMS = 4096
-
-  LEARNING_RATE = 3e-4
-
-@experiment_registry.register
-class Pythia160M(Pythia7B):
-  NUM_LAYERS = 12
-  MODEL_DIMS = 768
-  NUM_HEADS = 12
-  DIMS_PER_HEAD = 64
-  HIDDEN_DIMS = 3072
-
-  LEARNING_RATE = 6e-4
-
-@experiment_registry.register
-class Pythia70M(Pythia7B):
-  NUM_LAYERS = 6
-  MODEL_DIMS = 512
-  NUM_HEADS = 8
-  DIMS_PER_HEAD = 64
-  HIDDEN_DIMS = 2048
-
-  LEARNING_RATE = 10e-4
 
 @experiment_registry.register
 class C4SpmdLlama7BFFN16512:
@@ -1176,43 +1045,25 @@ class C4SpmdLlama7B256x1(C4SpmdLlama7B):
   LM_HEAD_CHUNK_SIZE = 512  # v4 NoWin chunk 512 PBS4/8 0.166/0.09; Win128: PBS 4 chunk128/512/1024 0.171/0.174/0.175, PBS 8 chunk512 0.094, PBS 12 chunk512 0.06
   # FFN_CHUNK_SIZE = 2752  # 0.087
 
+@experiment_registry.register
+class Pythia7B128x1(Pythia7B):
+  PERCORE_BATCH_SIZE = 2 * 2 * 2
+  ICI_MESH_SHAPE = [1, 128, 1]  # v3 win256 0.0525, v4 win256 0.0972
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512
+
 class PythiaInit:
   INIT_METHOD = 'small_init'
   OUTPUT_LAYER_INIT_METHOD = 'wang_init'
 
 @experiment_registry.register
-class Pythia410M64x1(PythiaInit, Pythia410M):
-  PERCORE_BATCH_SIZE = 2 * 2 * 2 * 2
-  ICI_MESH_SHAPE = [1, 64, 1]
-
-@experiment_registry.register
-class Pythia410M128x1(PythiaInit, Pythia410M):
-  PERCORE_BATCH_SIZE = 2 * 2 * 2
-  ICI_MESH_SHAPE = [1, 128, 1]
-
-@experiment_registry.register
-class Pythia70M64x1(PythiaInit, Pythia70M):
-  PERCORE_BATCH_SIZE = 16
-  ICI_MESH_SHAPE = [1, 64, 1]
-
-@experiment_registry.register
-class Pythia7B128x1(Pythia7B):
-  PERCORE_BATCH_SIZE = 2 * 2 * 2
-  ICI_MESH_SHAPE = [1, 128, 1]  # v3 win256 0.0525, v4 win256 0.0972
-  # NUM_LAYERS_PER_BLOCK = 2
-  # WINDOW_SIZE = [256, None]
-
-@experiment_registry.register
-class Pythia7B256x1(Pythia7B128x1):
-  PERCORE_BATCH_SIZE = 2 * 2
-  ICI_MESH_SHAPE = [1, 256, 1]
-
-# @experiment_registry.register
-# class Pythia7B256x1(C4SpmdLlama7B256x1):
-#   GPT_J_RESIDUAL = True  # v4 NoWin 0.1771, win256 0.1777
-
-@experiment_registry.register
 class Pythia7B128x1PythiaInit(PythiaInit, Pythia7B128x1): pass  # v4 0.0972
+
+@experiment_registry.register
+class Pythia7B256x1(C4SpmdLlama7B256x1):
+  GPT_J_RESIDUAL = True  # v4 NoWin 0.1771, win256 0.1777
 
 @experiment_registry.register
 class C4SpmdLlama7B64x4(C4SpmdLlama7B):
@@ -2364,22 +2215,6 @@ class Llama7BNG4DynWFFN8HD64Whole(C4SpmdLlama7B128x1, C4SpmdLlamaXLResTHDynWFFN8
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
-class Pythia7BDynWFFN16HD128Win256(Pythia7B, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
-  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0001)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
-  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
-  DYNAMIC_SQUEEZE_RATIO = 16
-  DYNAMIC_W_HIDDEN_DIM = 128  # v4 0.0693
-  QUERY_CHUNK_SIZE = 128
-  NUM_LAYERS_PER_BLOCK = 2
-  WINDOW_SIZE = [256, None]
-  MERGE_DW_PROJ = True
-
-# @experiment_registry.register
-# class Pythia7B128x1DynWFFN16HD128Win256(Pythia7BDynWFFN16HD128Win256):
-#   PERCORE_BATCH_SIZE = 2 * 2 * 2
-#   ICI_MESH_SHAPE = [1, 128, 1] 
-
-@experiment_registry.register
 class Pythia7B128x1DynWFFN16HD128Win256(Pythia7B128x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.0001)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
@@ -2417,62 +2252,6 @@ class Pythia7B128x1NG4DynWFFN4HD128Win256(Pythia7B128x1DynWFFN16HD128Win256):
 class Pythia7B128x1DynWFFN8HD256Win256(Pythia7B128x1DynWFFN16HD128Win256):
   DYNAMIC_SQUEEZE_RATIO = 8
   DYNAMIC_W_HIDDEN_DIM = 256  # v3/v4 oom
-
-@experiment_registry.register
-class Pythia7B256x1DynWFFN16HD128Win256(PythiaInit, Pythia7BDynWFFN16HD128Win256):
-  PERCORE_BATCH_SIZE = 2 * 2
-  ICI_MESH_SHAPE = [1, 256, 1] 
-
-@experiment_registry.register
-class C4Pythia7B256x1DynWFFN16HD128Win256(DataParams, Pythia7B256x1DynWFFN16HD128Win256):
-  EVAL_LOOP_NUM_BATCHES = 50  # v4 0.130
-
-@experiment_registry.register
-class PilePythia7B256x1DynWFFN16HD128Win256(PileDataParams, Pythia7B256x1DynWFFN16HD128Win256):
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))  # restart @900 to add 1000 to save_on_steps
-
-@experiment_registry.register
-class PilePythia410M64x1(PileDataParams, Pythia410M64x1):
-  pass  # v4 0.174
-
-@experiment_registry.register
-class PilePythia410M128x1(PileDataParams, Pythia410M128x1):
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000)) # v4 0.601!
-  # CHECKPOINT_EVERY_N_STEPS = 50
-  # EVAL_SKIP_TRAIN = True
-  # ctrl+c @200/600, delete pod @1200
-
-@experiment_registry.register
-class PilePythia70M64x1(PileDataParams, Pythia70M64x1):
-  CHECKPOINT_MAX_TO_KEEP = 15  # v4 llama arch 0.103
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
-  QUERY_CHUNK_SIZE = 128  # 128/None 1.49/1.15
-  # EVAL_SKIP_TRAIN = True
-  EVAL_INTERVAL_STEPS = 100
-  # ICI_MESH_SHAPE = [1, 8, 1]
-  # PERCORE_BATCH_SIZE = 1
-  # ONLY_EVAL = True
-
-@experiment_registry.register
-class SeqioPilePythia410M128x1(SeqioPileDataParams, Pythia410M128x1):
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
-
-@experiment_registry.register
-class PilePythia7B128x1(DataParams, Pythia7B128x1):
-  EVAL_LOOP_NUM_BATCHES = 50
-  MAX_SEQ_LEN = 2049
-  VOCAB_SIZE = 50432  # v3 0.0521
-  LOAD_SEQIO_TEXT = False
-  LOAD_SEQIO_ID = False
-  SHUFFLE = {'train': False, 'test': False}
-  VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-              'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-              'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-              }
-  DATA_FUNC = extract_pythia_datapath
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
 
 @experiment_registry.register
 class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
@@ -3299,215 +3078,3 @@ class C4SpmdPipelineGpt3SmallAdam8Replicas(C4SpmdPipelineGpt3AdamOrgHP):
   EVAL_INTERVAL_STEPS = 10
   SUMMARY_INTERVAL_STEPS = 5
   CHECKPOINT_EVERY_N_STEPS = 200
-
-
-@experiment_registry.register
-class Pythia7BLSP(DataParams, C4SpmdGpt37BRoPE):
-    NUM_LAYERS = 32
-    NUM_HEADS = 32
-    DIMS_PER_HEAD = 128
-    COMBINE_QKV = False
-    MODEL_DIMS = 4096
-    HIDDEN_DIMS = 16384
-    VOCAB_SIZE = 50432
-
-    PERCORE_BATCH_SIZE = 2
-    ICI_MESH_SHAPE = [1, 8, 1]
-
-    CHECKPOINT_EVERY_N_STEPS = 500
-    EVAL_LOOP_NUM_BATCHES = 50
-    EVAL_INTERVAL_STEPS = 250
-    CHECKPOINT_MAX_TO_KEEP = 2
-   
-    LAYERNORM_EPSILON = 1e-05
-    # Learning rate schedule
-    LEARNING_RATE = 1e-5
-    LR_SCHEDULE = "linear_rampup_cosine_decay"
-    # 最大学习率 * LR_LRED_MIN_RATIO： 最后保持稳定的学习率,即step > LR_COS_DECAY_END时的学习率
-    LR_COS_MIN_RATIO = 0.1
-    LR_COS_MAX = 1.0  # 这是cos曲线的最大值，和pytorch的cos曲线的学习率不是一个值，这个值 * LEARNING_RATE就是pytorch设定的值
-    # warmup step: 学习率从 0 -> LR_COS_MAX的步数, easyl: ratio, 0.02 * LR_COS_DECAY_END = 1170
-    LR_COS_WARMUP = 200
-    LR_COS_DECAY_START = LR_COS_WARMUP + 1  # decay start step: 学习率开始衰减的步数
-    LR_COS_DECAY_END = 10000  # decay end step # 学习率最后保持恒定的步数
-    WEIGHT_DECAY = 0.0
-    ADAM_BETA2 = 0.95
-    ADAM_BETA1 = 0.9
-    ADAM_EPSILON = 1e-8
-    CLIP_GRADIENT_NORM_TO_VALUE = 1.0
-
-    # TASK_NAME = "Pythia7B"
-    # WANDB_PROJECT = "pythia_7b_test"
-
-    TRAINING_SEED = 1234
-
-    QUERY_CHUNK_SIZE = 512
-    Z_LOSS_WEIGHT = 0.0
-    LM_HEAD_NORM = False
-    TRAINABLE_POSITION_EMB = False
-    USE_ROTARY_POSITION_EMB = True
-    USE_ALIBI_POSITION_EMB = False
-    NORMALIZATION_CLS = normalizations.LayerNorm
-    USE_BIAS = True
-    USE_GATED_ACTIVATION = False # no ff1_layer_gate
-    ACTIVATION_CLS = layers.GELU
-    ROTARY_TYPE = 'pythia'
-
-    MAX_SEQ_LEN = 2049  # ps：pythia读取的数据长度为2049
-
-    LOAD_SEQIO_TEXT = False
-    SHUFFLE = {'train': False, 'test': False}
-    VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-    KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-    DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-                'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-                }
-    DATA_FUNC = extract_pythia_datapath
-    # LOAD_SEQIO_ID = False
-
-    LOAD_SEQIO_ID = True
-    TASK_NAME = 'pythia'
-
-
-class MyDatasets(base_input.BaseInput):
-    path: Optional[str] = None
-    num_infeed_hosts: int = 0
-    reset_for_eval: bool = False
-    is_training: bool = True
-    batch_size: int = 8
-    seq_len: int = 2048
-    repeat: int = 1
-    train_seed: int = 1234
-    task_features: Optional[dict] = None
-    shuffle_buffer_size: Optional[int] = None
-    pad_id: int = 0
-    drop_remainder: bool = True
-    iter_file_nums: int = 2 # 100  500 steps/file
-    meta_dict: Optional[dict] = None
-    num_batches_to_skip: Optional[int] = None
-
-    def __post_init__(self):
-        if self.num_infeed_hosts == 0:
-            self.num_infeed_hosts = jax.process_count()
-
-        if not self.meta_dict:
-            self.meta_dict = {
-                "seed": self.train_seed,
-                "cur_files": [],
-                "file_in_data": 0,
-                "step_in_file": 0,
-                "iter_file_nums": self.iter_file_nums,
-                "checkpoint_step": None,
-            }
-            self.step_in_file = 0  # XD fix
-        else:
-            if self.meta_dict["file_in_data"] != 0:
-                assert self.meta_dict["iter_file_nums"] == self.iter_file_nums, print(
-                    f'iter_file_nums in meta_dict is not equal to cur args. => {self.meta_dict["iter_file_nums"]}≠'
-                    f" {self.iter_file_nums}"
-                )
-            self.step_in_file = self.meta_dict['step_in_file']  # XD fix
-        logging.info(f'meta_dict: {self.meta_dict}')
-        self.train_seed = self.meta_dict['seed']
-        self.dataset = self.load_tfrecord_dataset(fnames=self.path)
-        self._peek = None
-        self._state_before_peek = None
-
- #   def peek_padded(self):
-  #      return self.get_next_padded()
-
-    def get_next_padded(self):
-        if self._peek is not None:
-          output = self._peek
-          self._peek = None
-          self._state_before_peek = None
-          return output
-        unpadded = next(self.dataset)
-        pad_size = int(self.batch_padding_size)
-        if pad_size == 0:
-            return unpadded
-        return jax.tree_util.tree_map(
-            lambda x: np.pad(x, [[0, pad_size]] + [[0, 0]] * (x.ndim - 1)),
-            unpadded,
-        )
-
-    def get_global_batch_size(self, train_input):
-        logging.info(f"train_input: {train_input} type: {type(train_input)}")
-        return self.batch_size * self.num_infeed_hosts
-
-    def _parse_function(self, example_proto):
-        feature_desc = {key: tf.io.VarLenFeature(tf.int64) for key in self.task_features}
-        example = tf.io.parse_single_example(example_proto, feature_desc)
-        for name in list(example.keys()):
-            t = example[name]
-            if t.dtype == tf.int64:
-                t = tf.cast(t, dtype=tf.int32)
-            example[name] = tf.sparse.to_dense(t, default_value=0)
-        return example
-
-    def convert(self, data):
-        seq_len = self.seq_len
-        model_needed_inputs = NestedMap()
-        model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
-        model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
-        if "labels" in data:
-            weights = data["labels"] > 0
-        else:
-            weights = data["input_ids"] > 0
-        model_needed_inputs.weights = weights[:, 1:seq_len]
-        model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
-        model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)
-        pos = tf.range(seq_len - 1)
-        model_needed_inputs.segment_pos = model_needed_inputs.segment_ids * pos
-        return model_needed_inputs
-
-    def split(self):
-        return 
-
-    def _load_file_dataset(self, fname):
-        tf.random.set_seed(self.train_seed)
-        ds = tf.data.Dataset.from_tensor_slices(fname)
-        ds = ds.apply(tf.data.TFRecordDataset)
-        # shard host data
-        process_index = jax.process_index()
-        # logging.info(f"num_infeed_hosts: {self.num_infeed_hosts} || process_index: {process_index}")  # XD fix
-        ds = ds.shard(self.num_infeed_hosts, process_index)
-        ds = ds.map(self._parse_function, num_parallel_calls=tf.data.AUTOTUNE)
-        if self.shuffle_buffer_size is not None:
-            ds = ds.shuffle(buffer_size=self.shuffle_buffer_size)
-        padded_shapes = {key: self.seq_len for key in self.task_features}
-        padding_values = {key: self.pad_id for key in self.task_features}
-        ds = ds.padded_batch(
-            batch_size=np.prod(self.batch_size),
-            padded_shapes=padded_shapes,
-            padding_values=padding_values,
-            drop_remainder=True,
-        )
-        ds = ds.map(self.convert)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
-        # if self.meta_dict["step_in_file"]:
-        #     ds = ds.skip(self.meta_dict["step_in_file"])
-        if self.step_in_file: ds = ds.skip(self.step_in_file)  # XD fix
-        return ds
-
-    def load_tfrecord_dataset(self, fnames):
-        tf.random.set_seed(self.train_seed)
-        assert isinstance(fnames, list)
-        repeat_fnames = fnames * self.repeat
-        N = math.ceil(len(repeat_fnames) / self.iter_file_nums)
-        file_in_data = self.meta_dict["file_in_data"]
-        logging.info(f'file_in_data: {file_in_data} N: {N}')
-        for n in range(file_in_data, N, 1):
-            fname = repeat_fnames[n * self.iter_file_nums : (n + 1) * self.iter_file_nums]
-            self.meta_dict["cur_files"] = fname
-            ds = self._load_file_dataset(fname)
-            ds = ds.as_numpy_iterator()
-            for batch in ds:
-                # self.meta_dict["step_in_file"] += 1  # XD fix
-                self.step_in_file += 1
-                yield batch
-            self.meta_dict["file_in_data"] += 1
-            # self.meta_dict["step_in_file"] = 0  # XD fix
-            self.step_in_file = 0
-

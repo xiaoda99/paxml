@@ -679,6 +679,7 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
         decay_end=self.DECAY_END,
         clip_gradient_norm_to_value=self.CLIP_GRADIENT_NORM_TO_VALUE)
 
+    task_p.train.eval_skip_train = getattr(self, 'EVAL_SKIP_TRAIN', False)  # XD
     task_p.train.save_interval_steps = self.CHECKPOINT_EVERY_N_STEPS
     task_p.train.summary_interval_steps = self.SUMMARY_INTERVAL_STEPS
     task_p.train.save_on_steps = getattr(self, 'SAVE_ON_STEPS', None)  # XD

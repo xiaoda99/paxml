@@ -148,7 +148,8 @@ def train_and_evaluate(
   task_p.model.fprop_dtype = jnp.dtype(task_p.model.fprop_dtype)
 
   logging.info('[PAX STATUS]: Getting dataset configurations.')
-  input_p = experiment_config.datasets()
+  # lsp
+  input_p = experiment_config.datasets(job_log_dir=job_log_dir)
   for inp in input_p:
     if not isinstance(
         inp,
@@ -263,6 +264,8 @@ def train_and_evaluate(
   executor = experiment_config.executor()
   if not executor:
     executor = executors.DefaultExecutor()
+  # lsp
+  setattr(jax_task, 'only_eval', getattr(experiment_config, 'ONLY_EVAL', False))
   logging.info('[PAX STATUS]: Setting up executor.')
   with partitioner.global_mesh or contextlib.nullcontext():
     executor.setup(

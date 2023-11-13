@@ -156,7 +156,14 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
     self._external_checkpoint_path = external_checkpoint_path
     # TODO(b/278628399) Consider providing default implementation.
     self._external_checkpoint_handler = external_checkpoint_handler
-    self._step_to_restore = self.checkpoint_manager.latest_step()
+    # lsp
+   # self._step_to_restore = self.checkpoint_manager.latest_step()
+    num_batches_to_skip = getattr(checkpoint_manager, 'num_batches_to_skip', None)
+    if num_batches_to_skip is not None:
+        self._step_to_restore = num_batches_to_skip
+    else:
+        self._step_to_restore = self.checkpoint_manager.latest_step()
+    logging.info(f'self._step_to_restore: {self._step_to_restore}')
 
   @property
   def step_to_restore(self) -> Optional[int]:
@@ -250,8 +257,9 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       train_input_pipeline=None,
   ):
     del train_state_pspecs
-    if not self.checkpoint_manager.should_save(step_i):
-      return
+    # lsp
+    if not self.checkpoint_manager.should_save(step_i) or not self._enable_checkpoint_saving:
+        return
     self._save_with_args(
         step_i,
         partitioned_train_state=partitioned_train_state,
@@ -259,6 +267,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         train_input_pipeline=train_input_pipeline,
     )
     self.checkpoint_manager.check_for_errors()
+    return True
 
   # TODO(laigd): merge this with _SpmdEvalCheckpointer.get_model_states().
   def get_model_states(
@@ -267,6 +276,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       metadata: trainer_lib.TrainStateMetadata,
       root_prng_key: PRNGKey,
       train_input_pipeline: Optional[base_input.BaseInput] = None,
+      return_opt: bool = True, # lsp
   ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:
@@ -640,6 +650,8 @@ def _create_checkpointer(
       checkpoint_type=checkpoint_type,
       tensorstore_use_ocdbt=tensorstore_use_ocdbt,
   )
+  # lsp
+  checkpoint_manager.num_batches_to_skip = train_input_p.num_batches_to_skip
 
   if task_p.model.ici_mesh_shape is not None:
     checkpointer = _OrbaxPjitTrainingCheckpointer(
