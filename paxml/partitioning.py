@@ -843,6 +843,25 @@ class PjitPartitioner(Partitioner):
               var_weight_hparams=metadata.var_weight_hparams,
           )
       )
+    # lsp：加载预训练模型参数，初始化优化器参数
+    elif (
+        partitioned_train_state.opt_states is None
+        and partitioned_train_state.mdl_vars is not None
+    ):
+        metadata = self.get_train_state_metadata(discard_opt_states)
+        if not metadata.var_weight_hparams:
+            var_weight_hparams = self._jax_task.model.abstract_init_with_metadata(
+                metadata.inputs_shape_dtype, do_eval=False
+            )
+        else:
+            var_weight_hparams = metadata.var_weight_hparams
+
+        partitioned_train_state = self._jax_task.create_train_state(
+            partitioned_train_state.mdl_vars, var_weight_hparams, discard_opt_states=True
+        )
+    # lsp: 加载预训练参数和优化器
+    else:
+        pass
     logging.info(
         'partitioned train state shapes (global shape): %s',
         jax.tree_map(lambda x: x.shape, partitioned_train_state),

@@ -278,6 +278,18 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       train_input_pipeline: Optional[base_input.BaseInput] = None,
       return_opt: bool = True, # lsp
   ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
+
+    logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
+    if not return_opt:
+        if self._step_to_restore is None:
+                raise ValueError('When return_opt is True, Restore model have not been None!!!')
+        else:
+            padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
+            unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+    else:
+        padded_global_shapes = metadata.padded_global_shapes
+        unpadded_global_shapes = metadata.unpadded_global_shapes
+    
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:
         if self._external_checkpoint_path is None:
@@ -294,8 +306,8 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
       else:
         partitioned_train_state = self._restore_with_args(
             self._step_to_restore,
-            metadata.padded_global_shapes,
-            metadata.unpadded_global_shapes,
+            padded_global_shapes,
+            unpadded_global_shapes,
             partitioner.global_mesh,
             metadata.partition_specs,
             train_input_pipeline,

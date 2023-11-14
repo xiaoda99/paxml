@@ -328,8 +328,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             drop_remainder=True if is_training else False,
             num_batches_to_skip=num_batches_to_skip,  # lsp: add skip batch step
             num_infeed_hosts=num_infeed_hosts,
-            # reset_for_eval=False if is_training else True, # eval的时候为True
-            reset_for_eval=False,  # eval的时候为True -> False  # XD fix ???
+            reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),  # eval的时候为True -> False  # XD fix ???
             annotate_padding_fields=True,
             eval_loop_num_batches=getattr(self, 'EVAL_LOOP_NUM_BATCHES', 1),  # XD fix
         )
@@ -343,8 +342,8 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             meta_dict=meta_dict,
             batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
             seq_len=self.MAX_SEQ_LEN,
-            reset_for_eval=False,
-            repeat=3 if is_training else 3 * 30,
+            reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),
+            repeat=1,
             eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
             train_seed=self.TRAINING_SEED,
             task_features=list(self.KEY_MAP.values()),
@@ -1196,7 +1195,7 @@ class Pythia70M64x1(PythiaInit, Pythia70M):
   ICI_MESH_SHAPE = [1, 64, 1]
 
 @experiment_registry.register
-class Pythia7B128x1(Pythia7B):
+class Pythia7B128x1(PythiaInit, Pythia7B):
   PERCORE_BATCH_SIZE = 2 * 2 * 2
   ICI_MESH_SHAPE = [1, 128, 1]  # v3 win256 0.0525, v4 win256 0.0972
   # NUM_LAYERS_PER_BLOCK = 2
@@ -1211,8 +1210,8 @@ class Pythia7B256x1(Pythia7B128x1):
 # class Pythia7B256x1(C4SpmdLlama7B256x1):
 #   GPT_J_RESIDUAL = True  # v4 NoWin 0.1771, win256 0.1777
 
-@experiment_registry.register
-class Pythia7B128x1PythiaInit(PythiaInit, Pythia7B128x1): pass  # v4 0.0972
+# @experiment_registry.register
+# class Pythia7B128x1PythiaInit(PythiaInit, Pythia7B128x1): pass  # v4 0.0972
 
 @experiment_registry.register
 class C4SpmdLlama7B64x4(C4SpmdLlama7B):
@@ -2430,6 +2429,7 @@ class C4Pythia7B256x1DynWFFN16HD128Win256(DataParams, Pythia7B256x1DynWFFN16HD12
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256(PileDataParams, Pythia7B256x1DynWFFN16HD128Win256):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))  # restart @900 to add 1000 to save_on_steps
+  # _fix run: restart @2090x``
 
 @experiment_registry.register
 class PilePythia410M64x1(PileDataParams, Pythia410M64x1):
@@ -2452,26 +2452,15 @@ class PilePythia70M64x1(PileDataParams, Pythia70M64x1):
   # ICI_MESH_SHAPE = [1, 8, 1]
   # PERCORE_BATCH_SIZE = 1
   # ONLY_EVAL = True
+  # RESET_FOR_EVAL = True # True: test while test dataset
+
 
 @experiment_registry.register
 class SeqioPilePythia410M128x1(SeqioPileDataParams, Pythia410M128x1):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
 
 @experiment_registry.register
-class PilePythia7B128x1(DataParams, Pythia7B128x1):
-  EVAL_LOOP_NUM_BATCHES = 50
-  MAX_SEQ_LEN = 2049
-  VOCAB_SIZE = 50432  # v3 0.0521
-  LOAD_SEQIO_TEXT = False
-  LOAD_SEQIO_ID = False
-  SHUFFLE = {'train': False, 'test': False}
-  VOCABULARY = t5.data.PassThroughVocabulary(size=VOCAB_SIZE)
-  KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
-  DATA_PATH = {
-              'train': 'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-              'test':  'gs://common_datasets/pythia_pile_idxmaps_tfrecored', 
-              }
-  DATA_FUNC = extract_pythia_datapath
+class PilePythia7B128x1(PileDataParams, Pythia7B128x1):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
 
 @experiment_registry.register

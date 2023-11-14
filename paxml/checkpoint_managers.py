@@ -30,6 +30,7 @@ from paxml import checkpoint_paths
 from paxml import checkpoint_types
 from paxml import checkpoint_version
 from praxis import base_input
+from praxis import py_utils  # XD
 from praxis import pytypes
 import tensorflow.compat.v2 as tf
 
@@ -370,7 +371,8 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
 
       reason = 'worse metric' if self._track_best else 'old checkpoint'
       logging.info('Deleting %s: (Reason: %s).', info, reason)
-      self._delete_directory(info.step)
+      with py_utils.timeit() as period: self._delete_directory(info.step)  # XD
+      logging.info('_delete_directory() took %f seconds.', period.elapsed)
 
     kept_checkpoints += active_checkpoints
     if self._track_best:

@@ -829,7 +829,7 @@ class BaseEvalProgram(Program):
         self._eval_summary_writer, step, loss, metrics, summary_tensors
     )
     maybe_write_eval_outputs(
-        EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs
+        EvaluationMode.EVAL, output_dir, step, flat_scoring_outputs, write_pickle=False if self._task.only_eval else True
     )
 
     return EvalProgramOutput(
@@ -882,12 +882,11 @@ class BaseEvalProgram(Program):
       xla_passthrough.merge_back_xla_unsupported_batch(
           per_example_out, unsupported_inputs
       )
-      logging.info('Finished eval step %d for %s', step_num, self._name)
       loss, weighted_scalars, per_example_out, summary_tensors = (
           py_utils.maybe_unreplicate_for_fully_replicated(out)
           for out in (loss, weighted_scalars, per_example_out, summary_tensors)
       )
-
+      logging.info("Finished eval step %d for %s -> loss: %s", step_num, self._name, loss.item())
       losses += [loss]
       for k, v in summary_utils.flatten_summary_dict(summary_tensors):
         if k in summary_tensor_dict:

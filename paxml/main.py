@@ -237,7 +237,7 @@ def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
     experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
       if False and mdl > 1 else [replica, data // 2, mdl]
     experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
-    if getattr(experiment_config, 'DATA_PATH', None) is not None;
+    if getattr(experiment_config, 'DATA_PATH', None) is not None:
       experiment_config.DATA_PATH = {split: append_zone(path, tpu_type)
         for split, path in experiment_config.DATA_PATH.items()}
   return experiment_config
