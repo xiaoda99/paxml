@@ -371,11 +371,11 @@ def _train_and_evaluate_common(
      )
 
      eval_result_path = os.path.join(job_log_dir, f'eval_metrics.{step}.json')
-     logging.info(f'eval_metrics: {eval_metrics}')
+     logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
 
      logging.info(f'eval_result_path: {eval_result_path}')
      with mlxu.open_file(eval_result_path, 'w') as f:
-         json.dump(eval_metrics, f)
+         json.dump(eval_metrics.metrics_list, f)
      exit(0)
 
   train_p = task.train
