@@ -47,7 +47,7 @@ import seqio
 import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
-from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step  # XD fix
+from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_pythia_datapath2  # XD fix
 
 WeightInit = base_layer.WeightInit
 NestedMap = py_utils.NestedMap
