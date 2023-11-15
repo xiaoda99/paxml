@@ -370,11 +370,11 @@ def _train_and_evaluate_common(
           step=eval_partitioned_train_state.step,
       )
 
+      logging.info(f'eval_metrics: {eval_metrics}')
       eval_result_path = os.path.join(job_log_dir, f'{task_model}.{step}.eval_metrics')
       logging.info(f'eval_result_path: {eval_result_path}')
       with mlxu.open_file(eval_result_path, 'w') as f:
           json.dump(eval_metrics, f)
-      logging.info(f'eval_metrics: {eval_metrics}')
       exit(0)
 
   train_p = task.train
