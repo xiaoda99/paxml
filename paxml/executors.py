@@ -355,27 +355,28 @@ def _train_and_evaluate_common(
     program.setup(task, partitioner, job_log_dir, decode_prng_seed)
 
   if task.only_eval:
-      task_model = task.model.__class__.__name__
-      step = partitioned_train_state.step.item()
+     step = train_input.num_batches_to_skip
+     logging.info(f'model step: {step}')
 
-      logging.info(f'task_model: {task_model}')
-      eval_partitioned_train_state = programs.get_eval_train_state(
-              task, partitioned_train_state, task.train.eval_use_ema_states
-          )
-      assert eval_programs
-      logging.debug("[PAX STATUS]:  Running eval programs.")
-      eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
-          eval_programs=eval_programs,
-          train_state=eval_partitioned_train_state,
-          step=eval_partitioned_train_state.step,
-      )
+     # lsp: 仅仅获取模型参数,mdl_vars
+     eval_partitioned_train_state = programs.get_eval_train_state(
+             task, partitioned_train_state, task.train.eval_use_ema_states
+         )
+     assert eval_programs
+     logging.debug("[PAX STATUS]:  Running eval programs.")
+     eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
+         eval_programs=eval_programs,
+         train_state=eval_partitioned_train_state,
+         step=eval_partitioned_train_state.step,
+     )
 
-      logging.info(f'eval_metrics: {eval_metrics}')
-      eval_result_path = os.path.join(job_log_dir, f'{task_model}.{step}.eval_metrics')
-      logging.info(f'eval_result_path: {eval_result_path}')
-      with mlxu.open_file(eval_result_path, 'w') as f:
-          json.dump(eval_metrics, f)
-      exit(0)
+     eval_result_path = os.path.join(job_log_dir, f'eval_metrics.{step}.json')
+     logging.info(f'eval_metrics: {eval_metrics}')
+
+     logging.info(f'eval_result_path: {eval_result_path}')
+     with mlxu.open_file(eval_result_path, 'w') as f:
+         json.dump(eval_metrics, f)
+     exit(0)
 
   train_p = task.train
   train_state_metadata = partitioner.get_train_state_metadata()
