@@ -355,16 +355,10 @@ def _train_and_evaluate_common(
     program.setup(task, partitioner, job_log_dir, decode_prng_seed)
 
   if task.only_eval:
-      task_model = task.model.__class__
+      task_model = task.model.__class__.__name__
       step = partitioned_train_state.step.item()
 
-      eval_result_path = os.path.join(job_log_dir, f'{task_model}.{step}.eval_metrics')
-      logging.info(f'eval_result_path: {eval_result_path}')
-      with mlxu.open_file(eval_result_path, 'w') as f:
-          json.dump({}, f)
-
       logging.info(f'task_model: {task_model}')
-      # lsp: 仅仅获取模型参数,mdl_vars
       eval_partitioned_train_state = programs.get_eval_train_state(
               task, partitioned_train_state, task.train.eval_use_ema_states
           )
