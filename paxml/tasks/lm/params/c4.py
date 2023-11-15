@@ -349,6 +349,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             task_features=list(self.KEY_MAP.values()),
             shuffle_buffer_size=shuffle_buffer_size,
             num_batches_to_skip=num_batches_to_skip,
+            only_eval=getattr(self, 'ONLY_EVAL', False),
         )
     return p
 
@@ -2463,6 +2464,29 @@ class SeqioPilePythia410M128x1(SeqioPileDataParams, Pythia410M128x1):
 class PilePythia7B128x1(PileDataParams, Pythia7B128x1):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
 
+
+@experiment_registry.register
+class PythiaEval():
+  ONLY_EVAL = True
+  TEST_RATIO = 1
+  RESET_FOR_EVAL = True # True: test while test dataset
+  DATA_PATH = {
+                'train': 'gs://common_datasets/pythia_model_test/pile_test',
+                'test':  'gs://common_datasets/pythia_model_test/pile_test',
+                }
+  DATA_FUNC = extract_pythia_datapath2
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256Eval(PythiaEval, PilePythia7B256x1DynWFFN16HD128Win256):
+  TRAINING_NUM_BATCHES_TO_SKIP = 3000
+
+@experiment_registry.register
+class PilePythia7B128x1Eval(PythiaEval, PilePythia7B128x1):
+  TRAINING_NUM_BATCHES_TO_SKIP = 3000
+
+
 @experiment_registry.register
 class Llama7B256x1DynWFFN16HD128Whole(C4SpmdLlama7B256x1, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
   NUM_GROUPS = 1  # v4 pbs2 chunk128/256 0.202 (vs baseline 0.295, +46%) chunk512 0.184, rank4 0.186; pbs4 0.108 (vs baseline 0.166, +53.7%!); pbs8 0.0554 (vs baseline 0.09, +62.5%)
@@ -3375,12 +3399,13 @@ class MyDatasets(base_input.BaseInput):
     iter_file_nums: int = 2 # 100  500 steps/file
     meta_dict: Optional[dict] = None
     num_batches_to_skip: Optional[int] = None
+    only_eval: bool = False
 
     def __post_init__(self):
         if self.num_infeed_hosts == 0:
             self.num_infeed_hosts = jax.process_count()
 
-        if not self.meta_dict:
+        if not self.meta_dict or self.only_eval:
             self.meta_dict = {
                 "seed": self.train_seed,
                 "cur_files": [],
