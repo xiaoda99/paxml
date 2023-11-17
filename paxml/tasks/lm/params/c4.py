@@ -371,7 +371,8 @@ def set_adam_and_learning_rate_schedule(
       optimizers.Adam,
       beta1=cls.ADAM_BETA1 if cls.ADAM_BETA1 else 0.9,
       beta2=cls.ADAM_BETA2 if cls.ADAM_BETA2 else 0.999,
-      decoupled_weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,  # XD: add decoupled_
+      weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,
+      # decoupled_weight_decay=cls.WEIGHT_DECAY if cls.WEIGHT_DECAY else 0.0,  # XD: add decoupled_
       epsilon=cls.ADAM_EPSILON if cls.ADAM_EPSILON else 1e-6,
       epsilon_root=cls.ADAM_EPSILON_ROOT if cls.ADAM_EPSILON_ROOT else 0.0,
       clip_gradient_norm_to_value=cls.CLIP_GRADIENT_NORM_TO_VALUE
@@ -635,8 +636,11 @@ def configure_gpt3_task(
   model_p.decoder_tpl.seqlen = cls.MAX_SEQ_LEN  # pytype: disable=attribute-error  # enable-nested-classes
 
   if getattr(cls, 'EXPLICIT_INIT', True):  # XD
-    std = math.sqrt(2 / (5 * cls.MODEL_DIMS)) \
-      if getattr(cls, 'INIT_METHOD', None) == 'small_init' else 0.006  # XD
+    if isinstance(getattr(cls, 'INIT_METHOD', None), float):
+      std = cls.INIT_METHOD
+    else:
+      std = math.sqrt(2 / (5 * cls.MODEL_DIMS)) \
+        if getattr(cls, 'INIT_METHOD', None) == 'small_init' else 0.006  # XD
     model_p.params_init = WeightInit.Gaussian(std)
     softmax_init = WeightInit.Gaussian(std)
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init
@@ -686,8 +690,9 @@ def configure_gpt3_task(
     transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
     transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
     if hasattr(cls, 'MERGE_DW_PROJ'): transformer_layer_p.tr_atten_tpl.merge_dw_proj = cls.MERGE_DW_PROJ  # XD
-    if getattr(cls, 'OUTPUT_LAYER_INIT_METHOD', None) == 'wang_init':  # XD
-      output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS))
+    if getattr(cls, 'OUTPUT_LAYER_INIT_METHOD', None) is not None:  # XD
+      output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS)) \
+        if cls.OUTPUT_LAYER_INIT_METHOD == 'wang_init' else cls.OUTPUT_LAYER_INIT_METHOD
       transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_std
       transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
     # XD
@@ -696,7 +701,7 @@ def configure_gpt3_task(
                 'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
                 'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
                 'dim_per_head_v', 'value_gate_activation_cls',
-                'float32_logits', 'float32_probs', 'float32_value', 'qk_norm',
+                'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 ]:
       NAME = name.upper()
@@ -1179,6 +1184,10 @@ class C4SpmdLlama7B256x1(C4SpmdLlama7B):
 class PythiaInit:
   INIT_METHOD = 'small_init'
   OUTPUT_LAYER_INIT_METHOD = 'wang_init'
+
+class PythiaInit7B:
+  INIT_METHOD = 0.02
+  OUTPUT_LAYER_INIT_METHOD = 0.0025
 
 @experiment_registry.register
 class Pythia410M64x1(PythiaInit, Pythia410M):
@@ -2372,10 +2381,10 @@ class Pythia7BDynWFFN16HD128Win256(Pythia7B, C4SpmdLlamaXLResTHDynWFFN8HD64DW1Rm
   QUERY_CHUNK_SIZE = 128
   NUM_LAYERS_PER_BLOCK = 2
   WINDOW_SIZE = [256, None]
-  MERGE_DW_PROJ = True
+  MERGE_DW_PROJ = True 
 
 # @experiment_registry.register
-# class Pythia7B128x1DynWFFN16HD128Win256(Pythia7BDynWFFN16HD128Win256):
+# class Pythia7B128x1DynWFFN16HD128Win256(PythiaInit, Pythia7BDynWFFN16HD128Win256):
 #   PERCORE_BATCH_SIZE = 2 * 2 * 2
 #   ICI_MESH_SHAPE = [1, 128, 1] 
 
@@ -2430,7 +2439,13 @@ class C4Pythia7B256x1DynWFFN16HD128Win256(DataParams, Pythia7B256x1DynWFFN16HD12
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256(PileDataParams, Pythia7B256x1DynWFFN16HD128Win256):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))  # restart @900 to add 1000 to save_on_steps
-  # _fix run: restart @2090x``
+  # _fix run: restart @2090x @5240 @13760
+  # _fix_dw1norm run: v4 0.130 restart @2830
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256TransLogits(PilePythia7B256x1DynWFFN16HD128Win256):
+  TRANSPOSE_LOGITS = True  # v4 0.123
+  SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
 class PilePythia410M64x1(PileDataParams, Pythia410M64x1):
@@ -2462,8 +2477,24 @@ class SeqioPilePythia410M128x1(SeqioPileDataParams, Pythia410M128x1):
 
 @experiment_registry.register
 class PilePythia7B128x1(PileDataParams, Pythia7B128x1):
-  SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))
+  SAVE_ON_STEPS = [1000, 6000, 9000] + list(range(3000, 143000, 10000))  # v3 0.521
+  # _fix run: restart @8070
 
+@experiment_registry.register
+class PilePythia7B128x1FixRot(PilePythia7B128x1):
+  PYTHIA_ROTARY = True  # v3 0.519  restart @600
+  SAVE_ON_STEPS = [0, 1, 4, 8, 128, 256, 512] + [1000, 6000, 9000] + list(range(3000, 143000, 10000))
+
+@experiment_registry.register
+class PilePythia7B256x1FixRotAlighInit(PileDataParams, PythiaInit7B, Pythia7B256x1):
+  PYTHIA_ROTARY = True
+  SAVE_ON_STEPS = [0, 1, 4, 8, 128, 256, 512] + [1000, 6000, 9000] + list(range(3000, 143000, 10000))
+
+@experiment_registry.register
+class PilePythia7B256x1Win256(PileDataParams, Pythia7B256x1):
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]  # v4 0.182 vs PilePythia7B256x1DynWFFN16HD128Win256 v4 0.130
+  SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
 class PythiaEval():
@@ -3466,9 +3497,9 @@ class MyDatasets(base_input.BaseInput):
         model_needed_inputs.ids = data["input_ids"][:, : seq_len - 1]
         model_needed_inputs.labels = data["input_ids"][:, 1:seq_len]
         if "labels" in data:
-            weights = data["labels"] > 0
+            weights = data["labels"] >= 0
         else:
-            weights = data["input_ids"] > 0
+            weights = data["input_ids"] >= 0
         model_needed_inputs.weights = weights[:, 1:seq_len]
         model_needed_inputs.paddings = tf.zeros_like(model_needed_inputs.ids)
         model_needed_inputs.segment_ids = tf.ones_like(model_needed_inputs.ids)

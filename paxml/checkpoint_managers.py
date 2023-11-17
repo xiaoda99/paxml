@@ -19,6 +19,7 @@ import dataclasses
 import os
 import typing
 from typing import Any, Mapping, Optional, Sequence, Union
+from multiprocessing import Process
 
 from absl import logging
 from etils import epath
@@ -420,25 +421,31 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
 
   def _delete_directory(self, step: int):
     if jax.process_index() != 0:
-      return
-    options = typing.cast(CheckpointManagerOptions, self._options)
-    todelete_subdir = options.todelete_subdir
-    checkpoint_name = self._checkpoint_name(step)
-
-    if todelete_subdir:
-      rename_dir = self.directory / todelete_subdir
-      if not rename_dir.exists():
-        rename_dir.mkdir(parents=True)
-      src = self.directory / checkpoint_name
-      dst = rename_dir / checkpoint_name
-      # TODO(pax-team): Check if dst already exists?
-      tf.io.gfile.rename(src, dst)
+      return  
     else:
-      # super()._delete_directory(step)
-      try:
-        super()._delete_directory(step)
-      except Exception as e:  # XD
-        logging.error('Error deleting directory at step %d: %s', step, e)
+        # lsp: 开启一个进程后台删除
+      delete_process = Process(target=self._backend_del_directory, args=(step,))
+      delete_process.daemon = True
+      delete_process.start()
+
+  def _backend_del_directory(self, step):
+      options = typing.cast(CheckpointManagerOptions, self._options)
+      todelete_subdir = options.todelete_subdir
+      checkpoint_name = self._checkpoint_name(step)
+      if todelete_subdir:
+        rename_dir = self.directory / todelete_subdir
+        if not rename_dir.exists():
+          rename_dir.mkdir(parents=True)
+        src = self.directory / checkpoint_name
+        dst = rename_dir / checkpoint_name
+        # TODO(pax-team): Check if dst already exists?
+        tf.io.gfile.rename(src, dst)
+      else:
+        # super()._delete_directory(step)
+        try:
+          super()._delete_directory(step)
+        except Exception as e:  # XD
+          logging.error('Error deleting directory at step %d: %s', step, e)
 
   def structure(self) -> Union[Any, Mapping[str, Any]]:
     if self._checkpoint_type == CheckpointType.FLAX:

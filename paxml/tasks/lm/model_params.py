@@ -638,6 +638,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
       )
     if self.USE_ROTARY_POSITION_EMB:
       transformer_layer_p.tr_atten_tpl.use_rotary_position_emb = True
+      if hasattr(self, 'PYTHIA_ROTARY'):
+        transformer_layer_p.tr_atten_tpl.pythia_rotary = getattr(self, 'PYTHIA_ROTARY')
 
     num_early_layers = getattr(self, 'NUM_EARLY_LAYERS', 0)  # XD
     if num_early_layers:
