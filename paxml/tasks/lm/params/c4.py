@@ -702,7 +702,7 @@ def configure_gpt3_task(
                 'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
                 'dim_per_head_v', 'value_gate_activation_cls',
                 'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
-                'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
+                'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -716,11 +716,11 @@ def configure_gpt3_task(
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
         'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
         'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
-        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
+        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity','finetune_flag',
     ]
     for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
         'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
-        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
+        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd',  # 'squeeze_gate_activation_cls', 
       ] + dynamic_w_attrs:
       NAME = name.upper()
       if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -2018,6 +2018,10 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHL
   # for _nocap run, use PROBS_DW_CAP before step 6200 (though commented out in this class, somehow wrongly inherited from parent),
   # and remove PROBS_DW_CAP afterwards on a reboot (dd cap remains due to DW_ACTIVATION_CLS = layers.Tanh bug), causing a slight turn of params and activations @6200
 
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  FINETUNE_FLAG = True 
+
 @experiment_registry.register  # praxis 29dcf7b, paxml bcccfea 
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
   LOGITS_DW_ACTIVATION_CLS = None
@@ -2440,11 +2444,16 @@ class C4Pythia7B256x1DynWFFN16HD128Win256(DataParams, Pythia7B256x1DynWFFN16HD12
 class PilePythia7B256x1DynWFFN16HD128Win256(PileDataParams, Pythia7B256x1DynWFFN16HD128Win256):
   SAVE_ON_STEPS = [1000,] + list(range(3000, 143000, 10000))  # restart @900 to add 1000 to save_on_steps
   # _fix run: restart @2090x @5240 @13760
-  # _fix_dw1norm run: v4 0.130 restart @2830
+  # _fix_dw1norm run: v4 0.130 restart @2830 v3 0.0683
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256Aligned(PythiaInit7B, PilePythia7B256x1DynWFFN16HD128Win256):
+  PYTHIA_ROTARY = True  # restart @10500/19990/29820
+  CHECKPOINT_MAX_TO_KEEP = 2
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256TransLogits(PilePythia7B256x1DynWFFN16HD128Win256):
-  TRANSPOSE_LOGITS = True  # v4 0.123
+  TRANSPOSE_LOGITS = True  # v4 0.123 v4 0.646, BTNS v3 0.06459
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
@@ -2486,14 +2495,21 @@ class PilePythia7B128x1FixRot(PilePythia7B128x1):
   SAVE_ON_STEPS = [0, 1, 4, 8, 128, 256, 512] + [1000, 6000, 9000] + list(range(3000, 143000, 10000))
 
 @experiment_registry.register
-class PilePythia7B256x1FixRotAlighInit(PileDataParams, PythiaInit7B, Pythia7B256x1):
-  PYTHIA_ROTARY = True
+class PilePythia7B128x1FixRotAlignInit(PythiaInit7B, PilePythia7B128x1FixRot):
+  pass
+
+@experiment_registry.register
+class PilePythia7B256x1FixRotAlignInit(PileDataParams, PythiaInit7B, Pythia7B256x1):
+  PYTHIA_ROTARY = True  # v3 0.0892 vs PilePythia7B256x1Win256 v4 0.182 much slower
   SAVE_ON_STEPS = [0, 1, 4, 8, 128, 256, 512] + [1000, 6000, 9000] + list(range(3000, 143000, 10000))
+  # _earlyckpt run: restart @7470
 
 @experiment_registry.register
 class PilePythia7B256x1Win256(PileDataParams, Pythia7B256x1):
   NUM_LAYERS_PER_BLOCK = 2
-  WINDOW_SIZE = [256, None]  # v4 0.182 vs PilePythia7B256x1DynWFFN16HD128Win256 v4 0.130
+  WINDOW_SIZE = [256, None]  # v3 0.09; v4 0.182 vs PilePythia7B256x1DynWFFN16HD128Win256 v4 0.130
+  PYTHIA_ROTARY = True  # v3 0.08974 vs PilePythia7B256x1FixRotAlignInit v3 0.0892 very close
+  QK_NORM = True  # v3 0.08874
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
@@ -2516,6 +2532,12 @@ class PilePythia7B256x1DynWFFN16HD128Win256Eval(PythiaEval, PilePythia7B256x1Dyn
 @experiment_registry.register
 class PilePythia7B128x1Eval(PythiaEval, PilePythia7B128x1):
   TRAINING_NUM_BATCHES_TO_SKIP = 3000
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedEval(PythiaEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
+  TRAINING_NUM_BATCHES_TO_SKIP = 3000
+  ICI_MESH_SHAPE = [1, 16, 1]
+  PERCORE_BATCH_SIZE = 64
 
 
 @experiment_registry.register
