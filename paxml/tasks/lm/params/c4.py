@@ -2020,6 +2020,8 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHL
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
+  SAVE_ON_STEPS = list(range(70600+1000, 79600, 1000))
+  TRAINING_NUM_BATCHES_TO_SKIP = 70600 
   FINETUNE_FLAG = True 
 
 @experiment_registry.register  # praxis 29dcf7b, paxml bcccfea 
