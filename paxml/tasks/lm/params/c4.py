@@ -48,6 +48,7 @@ import t5.data
 from t5.data import preprocessors as t5_preprocessors
 from paxml.tasks.lm.params import global_cfg  # XD
 from paxml.utils import c4_registry, tfids_registry, extract_pythia_datapath, extract_train_skip_step, extract_pythia_datapath2  # XD fix
+from copy import deepcopy
 
 WeightInit = base_layer.WeightInit
 NestedMap = py_utils.NestedMap
@@ -2020,9 +2021,35 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm(C4SpmdLlamaXLResTHL
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
-  SAVE_ON_STEPS = list(range(70600+1000, 79600, 1000))
-  TRAINING_NUM_BATCHES_TO_SKIP = 70600 
+  SAVE_ON_STEPS = list(range(70600, 79600, 1000))
+  TRAINING_NUM_BATCHES_TO_SKIP = 0 
   FINETUNE_FLAG = True 
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneMultOpt(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
+  SAVE_ON_STEPS = list(range(70600, 79600, 1000))
+  TRAINING_NUM_BATCHES_TO_SKIP = 0 
+  FINETUNE_FLAG = True 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+
+    opt_main = task_p.train.learner.optimizer  # raw optimizer
+    learner_p = pax_fiddle.Config(learners.MultiOptimizerLearner)
+    learner_p.name = 'multi_opt_learner'
+    learner_p.loss_name = 'total_loss'
+    learner_p.optimizer = deepcopy(opt_main)
+    aux_p1 = deepcopy(opt_main)
+    aux_p1.lr_schedule = pax_fiddle.Config(schedules.Constant)
+
+    learner_p.auxiliary_optimizers = [aux_p1]
+    learner_p.auxiliary_regex = ['.*(pre|post)_proj.*']
+    learner_p.auxiliary_names = ['talking_proj']
+    task_p.train.learner = learner_p
+
+  return task_p 
+   
+
 
 @experiment_registry.register  # praxis 29dcf7b, paxml bcccfea 
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormNoDDTanh(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNorm):
