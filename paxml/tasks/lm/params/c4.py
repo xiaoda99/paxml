@@ -30,6 +30,7 @@ from paxml import experiment_registry
 from paxml import seqio_input
 from paxml import tasks_lib
 from paxml import trainer_lib
+from paxml import learners 
 from paxml.tasks.lm import model_params
 # from paxml.tasks.lm.params import lm_cloud  # XD
 from praxis import base_hyperparams
@@ -2046,8 +2047,7 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneMultOpt(C4Sp
     learner_p.auxiliary_regex = ['.*(pre|post)_proj.*']
     learner_p.auxiliary_names = ['talking_proj']
     task_p.train.learner = learner_p
-
-  return task_p 
+    return task_p 
    
 
 
