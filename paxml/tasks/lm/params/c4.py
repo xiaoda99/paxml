@@ -2026,6 +2026,17 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlama
   TRAINING_NUM_BATCHES_TO_SKIP = 0 
   FINETUNE_FLAG = True 
 
+
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
+  SAVE_ON_STEPS = list(range(70600, 79600, 1000))
+  DYNAMIC_D_HIDDEN_DIM = None
+  
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneDDHid(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
+  SAVE_ON_STEPS = list(range(70600, 79600, 1000))
+  DYNAMIC_D_HIDDEN_DIM = 16
+
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneMultOpt(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
   SAVE_ON_STEPS = list(range(70600, 79600, 1000))
