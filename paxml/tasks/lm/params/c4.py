@@ -2031,11 +2031,13 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlama
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
   SAVE_ON_STEPS = list(range(70600, 79600, 1000))
   DYNAMIC_D_HIDDEN_DIM = None
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00025) 
   
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneDDHid(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
   SAVE_ON_STEPS = list(range(70600, 79600, 1000))
   DYNAMIC_D_HIDDEN_DIM = 16
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0012) 
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneMultOpt(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
