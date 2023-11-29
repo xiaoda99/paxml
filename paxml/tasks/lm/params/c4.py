@@ -2026,6 +2026,18 @@ class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune(C4SpmdLlama
   TRAINING_NUM_BATCHES_TO_SKIP = 0 
   FINETUNE_FLAG = True 
 
+@experiment_registry.register
+class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneNores(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
+  SAVE_ON_STEPS = list(range(70600, 79600, 1000))
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    lp = task_p.train.learner
+    lp.optimizer.lr_schedule = pax_fiddle.Config(schedules.Constant)
+    lp.bprop_variable_inclusion = ['.*(pre|post)_proj.*', '.*layer_norm.*', '.*final_ln.*']
+    return task_p 
+ 
+
 
 @experiment_registry.register
 class C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetuneDD(C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormFinetune):
