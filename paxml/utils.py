@@ -91,69 +91,25 @@ def c4_registry(task, mode):
         )
 
 
-def extract_pythia_datapath2(task, mode):
-    if hasattr(task, 'train_test_dataset'):
-        return task.train_test_dataset
+def extract_pythia_datapath(task, mode):
     client = storage.Client()
     #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
     path = task.DATA_PATH[mode].replace('gs://', '')
     path_parts = path.split('/')
     bucket_name = path_parts[0]
-    directory_path = '/'.join(path_parts[1:]) + '/'
-
-    logging.info(f"bucket_name: {bucket_name} directory_path: {directory_path}")
-
+    directory_path = '/'.join(path_parts[1:])
+    directory_path = directory_path if directory_path.endswith('/') else directory_path + '/'
+    logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
     step_map_path = {}
     rerank = 0
     for blob in client.list_blobs(bucket_name, prefix=directory_path):
-        if '.tfrecord' in blob.name:
-            logging.info(f"Successful filename: {blob.name}=====")
-            try:
-                step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
-            except:
-                step = rerank
-                rerank += 1
-            path = f'gs://{os.path.join(bucket_name, blob.name)}'
-            step_map_path[step] = path
-        else:
-            logging.info(f"Failed filename: {blob.name}=====")
-
-    sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
-    steps, pathes = zip(*sorted_step_path)
-    if not isinstance(pathes, list):
-        pathes = list(pathes)
-
-    if task.SHUFFLE['train']: # train和test必须都shuffle，才能保证train和test的数据集不重合
-        random.shuffle(pathes)
-
-    test_num = int(len(pathes) * task.TEST_RATIO)
-    test = pathes[ :test_num]
-    train = pathes[test_num: ]
-    if not len(test):
-        test = pathes[:1]
-
-    if not len(train):
-        train = pathes[:1]
-        
-    train_test_dataset = {"test": test, "train": train}
-    logging.info(f'Train file: {len(train_test_dataset["train"])},  test file: {len(train_test_dataset["test"])}')
-    task.train_test_dataset = train_test_dataset
-    return train_test_dataset
-
-
-def extract_pythia_datapath(task, mode):
-    client = storage.Client()
-    #v3: us-east1-d -> common_datasets, v4: us-central2-b -> common_datasets_us-central2-b
-    bucket_name = os.path.dirname(task.DATA_PATH[mode])
-    if 'gs:' in bucket_name:
-        bucket_name = bucket_name[5: ]
-    directory_path = os.path.basename(task.DATA_PATH[mode]) + '/'
-    logging.info(f'bucket_name = {bucket_name}, directory_path = {directory_path}')
-    step_map_path = {}
-    for blob in client.list_blobs(bucket_name, prefix=directory_path):
         # logging.info(f"filename: {blob.name}=====")
-        if "pile.tfrecord.b" not in blob.name: continue
-        step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
+        if ".tfrecord" not in blob.name: continue
+        try:
+            step = int(blob.name.rsplit("pile.tfrecord.b", maxsplit=1)[-1])
+        except:
+            step = rerank
+            rerank += 1
         path = f'gs://{os.path.join(bucket_name, blob.name)}'
         step_map_path[step] = path
     sorted_step_path = sorted(step_map_path.items(), key=lambda x: x[0])
@@ -198,7 +154,7 @@ def extract_zh_en_novel_datapath(task, mode):
     return train_test_dataset
 
 
-def extract_train_skip_step(job_log_dir, step):
+def extract_train_skip_step(job_log_dir, step, only_eval=False):
     if job_log_dir is None:
         return {}
     model_dir = job_log_dir / "checkpoints"
@@ -217,7 +173,8 @@ def extract_train_skip_step(job_log_dir, step):
         meta_dict = {}
 
     if jax.process_index() == 0:
-        back_meta_dict_path = job_log_dir / f'{step}.json'
+        mode = 'train_break_steps' if not only_eval else 'eval_metric_steps'
+        back_meta_dict_path = job_log_dir / mode /f'{meta_dict.get("checkpoint_step", None)}.json'
         with back_meta_dict_path.open('w') as f1:
             json.dump(meta_dict, f1)
     return meta_dict

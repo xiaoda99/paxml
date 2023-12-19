@@ -587,7 +587,9 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
           layers.Embedding
       )
       model_p.lm_tpl.softmax_tpl = pax_fiddle.Config(layers.FullSoftmax)
-
+    # lsp
+    if hasattr(self, 'LOSS_BATCH_MEAN'): model_p.lm_tpl.softmax_tpl.loss_batch_mean = self.LOSS_BATCH_MEAN
+    if hasattr(self, 'ACC_BATCH_MEAN'): model_p.acc_batch_mean = self.ACC_BATCH_MEAN
     softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(self.MODEL_DIMS))
     # pytype: disable=attribute-error  # enable-nested-classes
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init

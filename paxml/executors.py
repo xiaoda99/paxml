@@ -357,6 +357,7 @@ def _train_and_evaluate_common(
   if task.only_eval:
     step = train_input.num_batches_to_skip
     logging.info(f'model step: {step}')
+    step = 0 if step is None else step
 
     # lsp: 仅仅获取模型参数,mdl_vars
     eval_partitioned_train_state = programs.get_eval_train_state(
@@ -367,14 +368,16 @@ def _train_and_evaluate_common(
     eval_metrics, elapsed_secs = eval_lib.run_eval_programs(
         eval_programs=eval_programs,
         train_state=eval_partitioned_train_state,
-        step=eval_partitioned_train_state.step,
+        step=step, # eval_partitioned_train_state.step -> step
     )
 
     logging.info(f'eval_metrics: {eval_metrics.metrics_list}')
 
     eval_result_path = job_log_dir / f'eval_metrics.{step}.json'
-    logging.info(f'eval_result_path: {eval_result_path}')
     write_json = {k: str(v) if not isinstance(v, list) else v for k, v in eval_metrics.metrics_list[0].items()}
+    logging.info(f'write_json: {write_json}')
+    eval_result_path = job_log_dir / f'eval_metrics.{train_input.name}.{step}.json'
+    logging.info(f'eval_result_path: {eval_result_path}')
     with eval_result_path.open('w') as f:
         json.dump(write_json, f)
     exit(0)
@@ -464,7 +467,6 @@ def _train_and_evaluate_common(
           train_p.num_train_steps,
       )
       break
-
     program_output = train_program.run(partitioned_train_state, step_i)
     partitioned_train_state = program_output.state
     train_weighted_scalars = program_output.weighted_scalars

@@ -286,9 +286,11 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
         else:
             padded_global_shapes = metadata.padded_global_shapes.replace(opt_states=None)
             unpadded_global_shapes = metadata.unpadded_global_shapes.replace(opt_states=None)
+            partition_specs = metadata.partition_specs.replace(opt_states=None)
     else:
         padded_global_shapes = metadata.padded_global_shapes
         unpadded_global_shapes = metadata.unpadded_global_shapes
+        partition_specs = metadata.partition_specs
     
     with py_utils.timeit() as restore_period:
       if self._step_to_restore is None:
@@ -309,7 +311,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
             padded_global_shapes,
             unpadded_global_shapes,
             partitioner.global_mesh,
-            metadata.partition_specs,
+            partition_specs,
             train_input_pipeline,
         )
     monitoring.record_event_duration_secs(
@@ -602,7 +604,7 @@ def _create_checkpointer(
       save_interval_steps=save_interval_steps,
       keep_time_interval=keep_interval_timedelta,
       todelete_subdir=todelete_subdir,
-      cleanup_tmp_directories=True,
+      cleanup_tmp_directories=not train_input_p.only_eval,
   )
 
   if checkpoint_type == CheckpointType.FLAX:

@@ -213,6 +213,8 @@ flags.DEFINE_integer(
     'num_hosts', None, help='num of hosts' )
 flags.DEFINE_integer(
     'host_idx', None, help='index of current host' )
+# lsp
+flags.DEFINE_integer("eval_model_step", None, help="eval step moel")
 
 # Flags --jax_backend_target, --jax_xla_backend, --jax_enable_checks are
 # available through JAX.
@@ -533,6 +535,11 @@ def _main(argv: Sequence[str]) -> None:
     )
 
   experiment_config.validate()
+  if FLAGS.eval_model_step is not None:
+    assert FLAGS.eval_on_test
+    assert experiment_config.ONLY_EVAL
+    setattr(experiment_config, 'TRAINING_NUM_BATCHES_TO_SKIP', int(FLAGS.eval_model_step))
+    logging.info(f"Change experiment_config TRAINING_NUM_BATCHES_TO_SKIP: {experiment_config.TRAINING_NUM_BATCHES_TO_SKIP}")
   run(experiment_config=experiment_config,
       enable_checkpoint_saving=FLAGS.enable_checkpoint_saving)
 
