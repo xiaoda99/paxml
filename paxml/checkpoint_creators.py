@@ -604,7 +604,7 @@ def _create_checkpointer(
       save_interval_steps=save_interval_steps,
       keep_time_interval=keep_interval_timedelta,
       todelete_subdir=todelete_subdir,
-      cleanup_tmp_directories=not train_input_p.only_eval,
+      cleanup_tmp_directories=not getattr(train_input_p, 'only_eval', False),  # XD
   )
 
   if checkpoint_type == CheckpointType.FLAX:

@@ -484,6 +484,8 @@ class SeqIOInput(base_input.BaseInput):
   eval_enable_cache: bool = True
   eval_num_examples: Optional[int] = None
   warm_start: bool = True
+  only_eval:bool = False
+
 
   def __post_init__(self):
     # Modify hparams in-place before freezing hparams
