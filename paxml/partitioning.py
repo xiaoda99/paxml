@@ -757,7 +757,9 @@ class PjitPartitioner(Partitioner):
 
     # Creates global mesh.
     model = task.model
-    self._mesh_names = model.mesh_axis_names
+    # lsp
+    self._mesh_names = model.mesh_axis_names if getattr(model, 'data_full_shard', True) else  model.mesh_axis_names[:2]
+    logging.info(f'data mesh names: {self._mesh_names}')
     if device_mesh is None:
       logging.info('creating mesh with py_utils.create_device_mesh')
       device_mesh = py_utils.create_device_mesh(

@@ -301,12 +301,12 @@ class BaseTrainProgram(Program):
     # Verify user-provided spec matches the first batch's structure.
     if step == self._initial_step and train_p.enforce_input_specs:
       self._partitioner.check_input_spec(model_inputs)
-
-    model_inputs = self._partitioner.preprocess_inputs(
-        self._train_input,
-        model_inputs,  ## First two args can be consolidated
-        self.train_input_partition_spec(model_inputs),
-    )
+# lsp
+#    model_inputs = self._partitioner.preprocess_inputs(
+#        self._train_input,
+#        model_inputs,  ## First two args can be consolidated
+#        self.train_input_partition_spec(model_inputs),
+#    )
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieved inputs.', 5)
 
     # Waits if it reaches max inflight steps. We do this after retrieving the
@@ -505,11 +505,12 @@ class BaseTrainProgram(Program):
       else:
         logging.debug('  Retrieved eval model_inputs.')
         logging.debug('  Performing eval_step() runs on training split.')
-        eval_inputs = self._partitioner.preprocess_inputs(
-            self._train_input,
-            eval_inputs,
-            self.train_input_partition_spec(eval_inputs),
-        )
+# lsp
+#        eval_inputs = self._partitioner.preprocess_inputs(
+#            self._train_input,
+#            eval_inputs,
+#            self.train_input_partition_spec(eval_inputs),
+#        )
 
         eval_state = get_eval_train_state(
             self._task, new_state, self._task.train.eval_use_ema_states
@@ -864,9 +865,10 @@ class BaseEvalProgram(Program):
               partitioning_spec=self.eval_input_partition_spec(eval_inputs),
           )
       )
-      eval_inputs = self._partitioner.preprocess_inputs(
-          self.eval_input, eval_inputs, supported_input_partition_spec
-      )
+# lsp
+#      eval_inputs = self._partitioner.preprocess_inputs(
+#          self.eval_input, eval_inputs, supported_input_partition_spec
+#      )
       eval_outputs = self.eval_step(
           state,
           self._eval_prng_seed,
