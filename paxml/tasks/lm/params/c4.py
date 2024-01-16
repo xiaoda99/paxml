@@ -690,12 +690,17 @@ def configure_gpt3_task(
     transformer_layer_p.tr_atten_tpl.internal_enable_per_dim_scale = False
     transformer_layer_p.tr_atten_tpl.use_bias = cls.USE_BIAS  # XD: True
     transformer_layer_p.tr_atten_tpl.num_kv_heads = getattr(cls, 'NUM_KV_HEADS', None)  # XD
+    transformer_layer_p.tr_atten_tpl.interleave_kv_heads = getattr(cls, 'INTERLEAVE_KV_HEADS', True)  # XD
     if hasattr(cls, 'MERGE_DW_PROJ'): transformer_layer_p.tr_atten_tpl.merge_dw_proj = cls.MERGE_DW_PROJ  # XD
     if getattr(cls, 'OUTPUT_LAYER_INIT_METHOD', None) is not None:  # XD
       output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS)) \
         if cls.OUTPUT_LAYER_INIT_METHOD == 'wang_init' else cls.OUTPUT_LAYER_INIT_METHOD
       transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_std
       transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
+    if hasattr(cls, 'SEGMENT_SIZE'):  # XD
+      transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
+    if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
+      transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -719,7 +724,8 @@ def configure_gpt3_task(
         'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
         'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
     ]
-    for name in ['use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
+    for name in ['input_activation_cls', 'use_input_bias',
+        'use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
         'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
         'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
       ] + dynamic_w_attrs:
@@ -1112,6 +1118,57 @@ class C4SpmdLlama7B(C4SpmdLlamaXXL):
   # ICI_MESH_SHAPE = [1, 128, 1]  # v3-128 2048*8*64*2 0.048, 2048*4*128*1 OOM!
   QUERY_CHUNK_SIZE = 128
   SUMMARY_INTERVAL_STEPS = 10
+
+class _Llama(C4SpmdGpt3AdamOrgHP):
+  ACTIVATION_CLS = layers.SiLU  # layers.SiLU/GELU  # XD
+  USE_GATED_ACTIVATION = True  # XD
+  COMBINE_QKV = False
+  USE_BIAS = False # XD add
+  NORMALIZATION_CLS = normalizations.RmsNorm  # XD add RmsNorm
+  SKIP_RMSNORM_WD = True
+  FPROP_DTYPE = jnp.bfloat16
+
+  SEPARATE_EMBEDDING = True  # XD
+  USE_ROTARY_POSITION_EMB = True
+
+  CHECKPOINT_MAX_TO_KEEP = 2
+
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    task_p = super().task()
+    if self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None  # XD: add if
+    return task_p
+
+class _Llama3B(_Llama):
+  NUM_LAYERS = 32
+  MODEL_DIMS = 2560
+  HIDDEN_DIMS = 6912
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 80
+
+class _Llama7B(_Llama):
+  NUM_LAYERS = 32
+  MODEL_DIMS = 4096
+  HIDDEN_DIMS = 11008
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 128
+
+class _Llama13B(_Llama):
+  NUM_LAYERS = 40
+  MODEL_DIMS = 5120
+  HIDDEN_DIMS = 13824
+  NUM_HEADS = 40
+  DIMS_PER_HEAD = 128
+
+class _Llama33B(_Llama):
+  NUM_LAYERS = 60
+  MODEL_DIMS = 6656
+  HIDDEN_DIMS = 17920
+  NUM_HEADS = 52
+  DIMS_PER_HEAD = 128
+
+class _SlimLlama7B(_Llama7B):
+  NUM_LAYERS = 48
+  HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 // 3
 
 @experiment_registry.register
 class Pythia7B(C4SpmdLlama7B):
@@ -2516,6 +2573,11 @@ class PilePythia7B256x1DynWFFN16HD128Win256TransLogits(PilePythia7B256x1DynWFFN1
   SUMMARY_INTERVAL_STEPS = 5
 
 @experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256RellocA4M4L48(PilePythia7B256x1DynWFFN16HD128Win256Aligned):
+  HIDDEN_DIMS = 16384 // 2  # v4 0.105
+  NUM_LAYERS = 48
+
+@experiment_registry.register
 class PilePythia410M64x1(PileDataParams, Pythia410M64x1):
   pass
 
@@ -2654,6 +2716,7 @@ class PilePythia3BDynWFFN16HD128Win256Aligned(PilePythia3B128x1FixRot, C4SpmdLla
 
   PERCORE_BATCH_SIZE = 2 * 2
   ICI_MESH_SHAPE = [1, 256, 1]  # v4 0.206
+  # ZERO_LOSS = False
 
 @experiment_registry.register
 class PilePythia33B512x1DynWFFN32HD256Win256Aligned(PilePythia33B512x1FixRot, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
@@ -2757,6 +2820,156 @@ class PileSpmdLlamaXLHead16x128LR0006(PileSpmdLlamaXLHead16x128):
   LR_COS_MIN_RATIO = 1 / 60
   QK_NORM = True
 
+# C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagProbsDWTanh  LOGITS/PROBS_DYNAMIC_W_INIT
+class _DC:
+  NUM_GROUPS = 1
+  QK_NORM = True
+  PROJECT_LOGITS = True
+  PROJECT_PROBS = True
+  # LOGITS_SQUEEZE_RATIO = None
+  SKIP_BIAS = True  # useless
+  TRANSPOSE = False
+  LEARNABLE_DIAG = True
+  ABSORB_RESIDUAL = False
+  PROBS_OUTPUT_ACTIVATION_CLS = None
+
+  USE_DW_HIDDEN_BIAS = False  # useless for merge_dw_proj
+  DW_HIDDEN_ACTIVATION_CLS = layers.GELU
+  DW1_NORM_CLS = normalizations.RmsNormNoScale
+  DW1_NORM_BIAS_INIT = 1e-6
+  DW_ACTIVATION_CLS = layers.Tanh  # only effective for dd
+  LOOP_OVER_DYNAMIC_HD = True
+  MERGE_DW_PROJ = True
+  
+  # for DCLlama7B
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+
+  QUERY_CHUNK_SIZE = 128
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  SUMMARY_VERBOSITY = 9
+
+class DCLlama3B(_DC, _Llama3B):  # TODO: add init
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 128
+
+class DCLlama7B(_DC, _Llama7B):
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 128
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+
+class DCSlimLlama7B(_DC, _SlimLlama7B):
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 128
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+
+class DCLlama13B(_DC, _Llama13B):  # TODO: add init
+  DYNAMIC_SQUEEZE_RATIO = 20
+  DYNAMIC_W_HIDDEN_DIM = 160
+
+class DCLlama33B(_DC, _Llama33B):  # TODO: add init
+  DYNAMIC_SQUEEZE_RATIO = 52
+  DYNAMIC_W_HIDDEN_DIM = 208
+
+@experiment_registry.register
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
+  MAX_SEQ_LEN = 2048
+  LEARNING_RATE = 3e-4
+  LR_COS_WARMUP = 2000
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 200000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.1
+
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 32, 1]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  SAVE_ON_STEPS = list(range(0, 300000, 10000))
+
+@experiment_registry.register
+class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
+  MAX_SEQ_LEN = 8192
+  WINDOW_SIZE = [256, 4096]
+  # 超显存10G
+  PERCORE_BATCH_SIZE = 2
+  QUERY_CHUNK_SIZE = 128
+  LM_HEAD_CHUNK_SIZE = 512
+
+@experiment_registry.register
+class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
+  #MAX_SEQ_LEN = 8192 * 4 // 2
+  # 跑不了
+  MAX_SEQ_LEN = 8192 * 2
+  WINDOW_SIZE = [256, 4096]
+  PERCORE_BATCH_SIZE = 1 #/ 4
+
+class _TrainConfig2Kx2x512x1:
+  LEARNING_RATE = 3e-4  # v3 0.0331
+  LR_COS_WARMUP = 2000
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 200000  # 800B tokens
+  LR_COS_MIN_RATIO = 0.1
+
+  PERCORE_BATCH_SIZE = 2
+  ICI_MESH_SHAPE = [1, 512, 1]
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  SUMMARY_INTERVAL_STEPS = 5
+
+@experiment_registry.register
+class PileDCLlama33B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, DCLlama33B):
+  pass  # v3 0.0331
+
+@experiment_registry.register
+class PileLlama33B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, _Llama33B):
+  QUERY_CHUNK_SIZE = 512  # v3 0.04104
+  # pass  # v3 0.0399
+
+@experiment_registry.register
+class PileDCLlama13B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, DCLlama13B):
+  pass  # v3 0.07599
+
+@experiment_registry.register
+class PileLlama13B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, _Llama13B):
+  QUERY_CHUNK_SIZE = 512  # v3 0.099819
+  # pass  # v3 0.096595
+
+class _TrainConfig2Kx4x256x1(_TrainConfig2Kx2x512x1):
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 256, 1]
+
+@experiment_registry.register
+class PileDCLlama13B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama13B):
+  pass  # v3
+
+@experiment_registry.register
+class PileLlama13B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, _Llama13B):
+  QUERY_CHUNK_SIZE = 512  # v3 0.099819
+  # pass  # v3 0.096595
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, DCLlama7B):
+  pass  # v3
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, _Llama7B):
+  QUERY_CHUNK_SIZE = 512  # v3
+  # pass  # v3
+
+class _TrainConfig2Kx8x128x1(_TrainConfig2Kx2x512x1):
+  PERCORE_BATCH_SIZE = 8
+  ICI_MESH_SHAPE = [1, 128, 1]
+
+@experiment_registry.register
+class PileDCLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, DCLlama3B):
+  pass  # v3
+
+@experiment_registry.register
+class PileLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, _Llama3B):
+  QUERY_CHUNK_SIZE = 512  # v3 0.099819
+  # pass  # v3 0.096595
+
 class _CommonConfig:
   QUERY_CHUNK_SIZE = 128
   EMBEDDING_LOOKUP_STYLE = 'index'
@@ -2800,7 +3013,7 @@ class PileDCLlamaXL(PileDataParams, _DCConfig, _XLConfig, C4SpmdLlamaXLResTHDynW
 
 @experiment_registry.register
 class PileDCLlamaXLFixDWInit(PileDCLlamaXL):
-  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # should be 5e-5 for NUM_HEAD 32. sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00015) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
 
 @experiment_registry.register
@@ -2812,6 +3025,8 @@ class PileDCLlamaXLFixDWShape(PileDCLlamaXLFixDWInit):
 class PileDCLlamaXLHead16x128(PileDCLlamaXLFixDWInit):
   NUM_HEADS = 16
   DIMS_PER_HEAD = 128  # v4 0.364! >> PileDCLlamaXL v4 0.238
+  # also >> C4SpmdLlamaXLResTHLogitsFFN2GELUDynWFFN8HD64DW1RmsNormWhole v4 0.16 * 2
+  # may be even faster if pbs 4 -> 8
 
 @experiment_registry.register
 class PileDCLlamaXLRellocA6M6(PileDCLlamaXLFixDWInit):
@@ -2834,6 +3049,44 @@ class PileDCLlamaXLRellocA4M4L36(PileDCLlamaXLFixDWInit):
 class PileLlamaXLRellocA4M4L36(PileLlamaXL):
   HIDDEN_DIMS = 2752  # 5504 // 2
   NUM_LAYERS = 36  # v4 0.331
+
+@experiment_registry.register
+class PileDCLlamaXLHead16x128GQA4(PileDCLlamaXLHead16x128):
+  NUM_KV_HEADS = 4  # v3 0.265
+  HIDDEN_DIMS = 6528
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8(PileDCLlamaXLFixDWShape):
+  NUM_KV_HEADS = 8  # v3 0.191
+  HIDDEN_DIMS = 6528
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG4DiffKV(PileDCLlamaXLGQA8):
+  NUM_GROUPS = 4  # v3 0.193
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+  
+@experiment_registry.register
+class PileDCLlamaXLGQA4NG4SameKV(PileDCLlamaXLGQA8NG4DiffKV):
+  NUM_KV_HEADS = 4  # v3 0.194
+  INTERLEAVE_KV_HEADS = False
+  HIDDEN_DIMS = 6656
+
+@experiment_registry.register
+class PileDCLlamaXLGQA4NG8DiffKV(PileDCLlamaXLGQA4NG4SameKV):
+  NUM_GROUPS = 8  # v3 0.158 << others
+  INTERLEAVE_KV_HEADS = True
+  DYNAMIC_SQUEEZE_RATIO = 4
+  DYNAMIC_W_HIDDEN_DIM = 8
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG4MixKV(PileDCLlamaXLGQA8NG4DiffKV):
+  INTERLEAVE_KV_HEADS = None  # v3 0.193
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG4MixKVRank2(PileDCLlamaXLGQA8NG4MixKV):
+  DYNAMIC_SQUEEZE_RATIO = 4  # v3 0.167
+  DYNAMIC_W_HIDDEN_DIM = 32
 
 class _LargeConfig(_CommonConfig):
   LEARNING_RATE = 2.5e-4
@@ -2862,7 +3115,7 @@ class PileDCLlamaLarge(PileDataParams, _DCConfig, _LargeConfig, C4SpmdLlamaLarge
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00018) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
 
 class _MediumConfig(_CommonConfig):
-  LR_COS_WARMUP = 135 * 4
+  LR_COS_WARMUP = 135 #* 4
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_MIN_RATIO = 0.1
   
@@ -2870,9 +3123,9 @@ class _MediumConfig(_CommonConfig):
   # v1
   PERCORE_BATCH_SIZE = 8
   LEARNING_RATE = 3e-4
-  LR_COS_DECAY_END = 13500 * 4
-  # SAVE_ON_STEPS = list(range(3000, 15000, 3000)) + [13500]
-  SAVE_ON_STEPS = list(range(3000 * 4, 15000 * 4, 3000 * 4)) + [13500 * 4]
+  LR_COS_DECAY_END = 13500 #* 4
+  SAVE_ON_STEPS = list(range(3000, 15000, 3000)) + [13500]
+  # SAVE_ON_STEPS = list(range(3000 * 4, 15000 * 4, 3000 * 4)) + [13500 * 4]
   # stepsx2
   # PERCORE_BATCH_SIZE = 4
   # LEARNING_RATE = 2.5e-4
@@ -2931,6 +3184,105 @@ class PileDCLlamaMediumGVO(PileDCLlamaMedium):
   VALUE_GATE_ACTIVATION_CLS = layers.SiLU
   O_GATE_ACTIVATION_CLS = layers.SiLU  # v3 0.229
   HIDDEN_DIMS = 2048  # MODEL_DIMS * 6 / 3
+
+@experiment_registry.register
+class PileDCLlamaMediumDimVO128(PileDCLlamaMedium):
+  DIM_PER_HEAD_V = 128  # v3 0.231
+  HIDDEN_DIMS = 2048  # MODEL_DIMS * 6 / 3
+
+@experiment_registry.register
+class PileDCLlamaMediumSeg64(PileDCLlamaMedium):
+  SEGMENT_SIZE = 64  # v3 0.2266
+  HIDDEN_DIMS = 2752
+  # RESIDUAL_CROSS_ACT_PROJ = False
+  
+@experiment_registry.register
+class PileDCLlamaMediumResSeg64(PileDCLlamaMedium):
+  SEGMENT_SIZE = 64  # v3 0.2266
+  HIDDEN_DIMS = 2752
+  RESIDUAL_CROSS_ACT_PROJ = True
+
+@experiment_registry.register
+class PileDCLlamaMediumProbsInpGELU(PileDCLlamaMedium):
+  PROBS_INPUT_ACTIVATION_CLS = layers.GELU  # v3 0.229
+
+@experiment_registry.register
+class PileDCLlamaMediumInpGELU(PileDCLlamaMedium):
+  LOGITS_INPUT_ACTIVATION_CLS = layers.GELU  # v3 0.221
+  PROBS_INPUT_ACTIVATION_CLS = layers.GELU
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
+  USE_STATIC_W = False  # v4 0.366
+
+@experiment_registry.register
+class PileDCLlamaMediumSW(PileDCLlamaMedium):
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None  # v4 0.49
+  DYNAMIC_D_INIT = None
+
+@experiment_registry.register
+class PileDCLlamaMediumSWNoWinNoQKNorm(PileDCLlamaMediumSW):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class PileDCLlamaMediumNoWinNoQKNorm(PileDCLlamaMedium):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class PileDCLlamaMediumSWNoOKNorm(PileDCLlamaMediumSW):
+  QK_NORM = False
+
+@experiment_registry.register
+class PileDCLlamaMediumNoOKNorm(PileDCLlamaMedium):
+  QK_NORM = False
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16(DataParams, _DCConfig, _MediumConfig, C4SpmdLlamaMedium, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  LR_COS_WARMUP = 256
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 50000
+  LEARNING_RATE = 2e-4
+
+  PERCORE_BATCH_SIZE = 16
+  MAX_SEQ_LEN = 1024
+
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 64
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00014)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00022) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16SW(C4DCLlamaMedium1Kx16):
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None
+  DYNAMIC_D_INIT = None
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16NoWinNoQKNorm(C4DCLlamaMedium1Kx16):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16SWNoWinNoQKNorm(C4DCLlamaMedium1Kx16SW):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16NoQKNorm(C4DCLlamaMedium1Kx16):
+  QK_NORM = False
+
+@experiment_registry.register
+class C4DCLlamaMedium1Kx16SWNoQKNorm(C4DCLlamaMedium1Kx16SW):
+  QK_NORM = False
 
 class _SmallConfig(_CommonConfig):
   LR_COS_WARMUP = 48
@@ -3907,7 +4259,7 @@ class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
     ICI_MESH_SHAPE = [1, 32, 1]
     PERCORE_BATCH_SIZE = 32
- #   LM_HEAD_CHUNK_SIZE = None
+    LM_HEAD_CHUNK_SIZE = None
     FPROP_DTYPE = jnp.bfloat16
     SHUFFLE = {"train": False, "test": False}
     ONLY_EVAL = True
@@ -3918,7 +4270,7 @@ class BaseEval():
 
 @experiment_registry.register
 class PileEval(BaseEval):
-    ZERO_LOSS = False
+    ZERO_LOSS = True
     LOSS_BATCH_MEAN = False
     ACC_BATCH_MEAN = False
 
@@ -3928,8 +4280,8 @@ class PileEval(BaseEval):
                 }
     KEY_MAP = {"targets": "input_ids", "masks": "input_ids"}
     TASK_NAME = 'Pile'
-    EVAL_LOOP_NUM_BATCHES = 50
-    RESET_FOR_EVAL = False
+    EVAL_LOOP_NUM_BATCHES = 162
+    RESET_FOR_EVAL = True
     
 @experiment_registry.register
 class FlanMiniEval(BaseEval):
@@ -3955,7 +4307,7 @@ class PilePythia410M128x1DynWFFN8HD64Win256AlignedPileEval(PileEval, PilePythia4
 
 @experiment_registry.register
 class PilePythiaXLDynWFFN8HD64Win256AlignedFlanMiniEval(FlanMiniEval, PilePythiaXLDynWFFN8HD64Win256Aligned):
-  TASK_NAME = 'SelfModelPile'
+  TASK_NAME = 'PilePythiaXLDynWFFN8HD64Win256AlignedFlanMini'
 
 @experiment_registry.register
 class PilePythia410M128x1DynWFFN8HD64Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia410M128x1DynWFFN8HD64Win256Aligned):
@@ -3983,7 +4335,7 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia7
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
-  TASK_NAME = 'SelfModelFlanMiniWhole'
+  TASK_NAME = 'SelfModelFlanMiniSmallPile'
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256PileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256):
@@ -4048,6 +4400,10 @@ class PileDCLlamaSmallPileEval(PileEval, PileDCLlamaSmall):
 @experiment_registry.register
 class PilePythia3BDynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia3BDynWFFN16HD128Win256Aligned):
   TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedPileEval'
+
+@experiment_registry.register
+class PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia3BDynWFFN16HD128Win256Aligned):
+  TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEvalSmallPile'
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None
