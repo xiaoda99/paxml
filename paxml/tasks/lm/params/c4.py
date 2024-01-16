@@ -630,6 +630,7 @@ def configure_gpt3_task(
 ) -> pax_fiddle.Config[tasks_lib.SingleTask]:
   """Returns task with gpt3 related configs."""
   model_p = task_p.model  # pytype: disable=attribute-error  # enable-nested-classes
+  if hasattr(cls, 'DATA_FULL_SHARD'): model_p.data_full_shard = cls.DATA_FULL_SHARD
 
   model_p.decoder_tpl.eos_id = (
       GPT_EOS_ID  # pytype: disable=attribute-error  # enable-nested-classes

@@ -273,7 +273,9 @@ def adjust_input_params_for_small_batch(
   # Determine correct padding amount.
   copy = input_p.clone()
   if batch_size <= local_device_count:
-    copy.batch_padding_size = local_device_count - batch_size
+    # lsp
+    #copy.batch_padding_size = local_device_count - batch_size
+    copy.batch_padding_size = 0
   else:
     if batch_size % local_device_count != 0:
       if jax.process_count() > 1:
