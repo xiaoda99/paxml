@@ -762,11 +762,15 @@ class PjitPartitioner(Partitioner):
     logging.info(f'data mesh names: {self._mesh_names}')
     if device_mesh is None:
       logging.info('creating mesh with py_utils.create_device_mesh')
-      device_mesh = py_utils.create_device_mesh(
-          model.ici_mesh_shape,
-          model.dcn_mesh_shape,
-          contiguous_submeshes=model.contiguous_submeshes,
-      )
+      # 创建Mesh，但是这个函数出来的是无序的类似于[1, 3, 4, 7, 0, 2, 6]，如果这个无序Mesh传入host_local_array_to_global_array会报错
+      if len(self._mesh_names) == 3: # 即data full shard 这时候保留原始paxml生成的无序mesh id
+        device_mesh = py_utils.create_device_mesh(
+            model.ici_mesh_shape,
+            model.dcn_mesh_shape,
+            contiguous_submeshes=model.contiguous_submeshes,
+        )
+      else:
+        device_mesh = np.array(jax.devices()).reshape(model.ici_mesh_shape)
     else:
       logging.info('Using provided mesh for PjitPartitioner')
     logging.info('device_mesh: %s', device_mesh)
