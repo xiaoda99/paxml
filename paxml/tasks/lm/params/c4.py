@@ -630,7 +630,7 @@ def configure_gpt3_task(
 ) -> pax_fiddle.Config[tasks_lib.SingleTask]:
   """Returns task with gpt3 related configs."""
   model_p = task_p.model  # pytype: disable=attribute-error  # enable-nested-classes
-  if hasattr(cls, 'DATA_FULL_SHARD'): model_p.data_full_shard = cls.DATA_FULL_SHARD
+  if hasattr(model_p, 'data_full_shard'): model_p.data_full_shard = getattr(cls, 'DATA_FULL_SHARD', True)
 
   model_p.decoder_tpl.eos_id = (
       GPT_EOS_ID  # pytype: disable=attribute-error  # enable-nested-classes
@@ -702,6 +702,10 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
+
+    if hasattr(cls, 'FFN_CHUKN_SIZE'):
+      transformer_layer_p.tr_fflayer_tpl.chunk_size = cls.FFN_CHUKN_SIZE
+
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -2716,8 +2720,22 @@ class PilePythia3BDynWFFN16HD128Win256Aligned(PilePythia3B128x1FixRot, C4SpmdLla
   CHECKPOINT_MAX_TO_KEEP = 2
 
   PERCORE_BATCH_SIZE = 2 * 2
-  ICI_MESH_SHAPE = [1, 256, 1]  # v4 0.206
+  ICI_MESH_SHAPE = [1, 256, 1]  # v4 0.206  acutally trained with this config in order to be faster
   # ZERO_LOSS = False
+
+@experiment_registry.register
+class PilePythia3BDynWFFN16HD128Win256AlignedSW(PilePythia3BDynWFFN16HD128Win256Aligned):
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None  # v4 0.28
+  DYNAMIC_D_INIT = None
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedSW(PilePythia7B256x1DynWFFN16HD128Win256Aligned):
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None  # v3 0.078
+  DYNAMIC_D_INIT = None
 
 @experiment_registry.register
 class PilePythia33B512x1DynWFFN32HD256Win256Aligned(PilePythia33B512x1FixRot, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
@@ -2867,6 +2885,18 @@ class DCSlimLlama7B(_DC, _SlimLlama7B):
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.0001)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
 
+class DCSlimLlama7BNG4(DCSlimLlama7B):
+  NUM_GROUPS = 4
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+  # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
+
+class DCSlimLlama7BNG2(DCSlimLlama7B):
+  NUM_GROUPS = 2
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16 * (16 // 8) * 2
+  # TODO: DYNAMIC_W_INIT and DYNAMIC_D_INIT should also be changed
+
 class DCLlama13B(_DC, _Llama13B):  # TODO: add init
   DYNAMIC_SQUEEZE_RATIO = 20
   DYNAMIC_W_HIDDEN_DIM = 160
@@ -2875,8 +2905,9 @@ class DCLlama33B(_DC, _Llama33B):  # TODO: add init
   DYNAMIC_SQUEEZE_RATIO = 52
   DYNAMIC_W_HIDDEN_DIM = 208
 
+
 @experiment_registry.register
-class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
+class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7BNG2):
   MAX_SEQ_LEN = 2048
   LEARNING_RATE = 3e-4
   LR_COS_WARMUP = 2000
@@ -2891,20 +2922,27 @@ class PileDCSlimLlama7B2Kx4x512x1(DataParams, PythiaInit, DCSlimLlama7B):
 
 @experiment_registry.register
 class PileDCSlimLlama7B8Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
-  MAX_SEQ_LEN = 8192
+  MAX_SEQ_LEN = 8192 * 4
   WINDOW_SIZE = [256, 4096]
-  # 超显存10G
-  PERCORE_BATCH_SIZE = 2
-  QUERY_CHUNK_SIZE = 128
+  PERCORE_BATCH_SIZE = 1
+  QUERY_CHUNK_SIZE = 2048
   LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 32, 1]
+  DATA_FULL_SHARD = False
+  # FFN_CHUKN_SIZE = 5504 // 2
+
 
 @experiment_registry.register
 class PileDCSlimLlama7B32Kx1x512x1Win256_4K(PileDCSlimLlama7B2Kx4x512x1):
   #MAX_SEQ_LEN = 8192 * 4 // 2
-  # 跑不了
-  MAX_SEQ_LEN = 8192 * 2
+  MAX_SEQ_LEN = 8192 * 4
   WINDOW_SIZE = [256, 4096]
-  PERCORE_BATCH_SIZE = 1 #/ 4
+  PERCORE_BATCH_SIZE = 0.25 * 2 #/ 4
+  QUERY_CHUNK_SIZE = 512
+  LM_HEAD_CHUNK_SIZE = 512
+  ICI_MESH_SHAPE = [1, 16, 2]
+  DATA_FULL_SHARD = False
+  FFN_CHUKN_SIZE = 5504 // 8
 
 class _TrainConfig2Kx2x512x1:
   LEARNING_RATE = 3e-4  # v3 0.0331
@@ -2970,6 +3008,12 @@ class PileDCLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit
 class PileLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, _Llama3B):
   QUERY_CHUNK_SIZE = 512  # v3 0.099819
   # pass  # v3 0.096595
+
+class _SWConfig:
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None
+  DYNAMIC_D_INIT = None
 
 class _CommonConfig:
   QUERY_CHUNK_SIZE = 128
@@ -3089,6 +3133,36 @@ class PileDCLlamaXLGQA8NG4MixKVRank2(PileDCLlamaXLGQA8NG4MixKV):
   DYNAMIC_SQUEEZE_RATIO = 4  # v3 0.167
   DYNAMIC_W_HIDDEN_DIM = 32
 
+@experiment_registry.register
+class PileLlamaXLQKNorm(PileLlamaXL):
+  QK_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaXLSW(_SWConfig, PileDCLlamaXLFixDWShape): pass
+
+@experiment_registry.register
+class PileDCLlamaXLSWNoWinNoQKNorm(PileDCLlamaXLSW):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class PileDCLlamaXLDWDD(PileDCLlamaXLFixDWShape):
+  USE_STATIC_W = False  # v4 0.282
+
+@experiment_registry.register
+class PileDCLlamaXLNoQKNorm(PileDCLlamaXLFixDWShape):
+  QK_NORM = False  # v4 0.262
+
+@experiment_registry.register
+class PileDCLlamaXLHead16x128SW(_SWConfig, PileDCLlamaXLHead16x128): pass
+
+@experiment_registry.register
+class PileDCLlamaXLHead16x128SWNoWinNoQKNorm(PileDCLlamaXLHead16x128SW):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
 class _LargeConfig(_CommonConfig):
   LEARNING_RATE = 2.5e-4
   LR_COS_WARMUP = 290
@@ -3135,7 +3209,8 @@ class _MediumConfig(_CommonConfig):
 
 @experiment_registry.register
 class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
-  pass  # v3 0.520
+  ZERO_LOSS = False
+  # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
@@ -3217,7 +3292,21 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
   USE_STATIC_W = False  # v4 0.366
 
 @experiment_registry.register
-class PileDCLlamaMediumSW(PileDCLlamaMedium):
+class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
+  QK_NORM = False 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWNoQKNorm(PileDCLlamaMediumDWDDNoQKNorm):
+  DYNAMIC_D_INIT = None
+
+@experiment_registry.register
+class PileDCLlamaMediumDDNoQKNorm(PileDCLlamaMediumDWDDNoQKNorm):
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None
+
+@experiment_registry.register
+class PileDCLlamaMediumSW(PileDCLlamaMedium):  # wrong warmup = 135 * 4
   LOGITS_DYNAMIC_W_INIT = None
   PROBS_DYNAMIC_W_INIT = None
   DYNAMIC_W_INIT = None  # v4 0.49
@@ -3236,11 +3325,20 @@ class PileDCLlamaMediumNoWinNoQKNorm(PileDCLlamaMedium):
   QK_NORM = False
 
 @experiment_registry.register
-class PileDCLlamaMediumSWNoOKNorm(PileDCLlamaMediumSW):
-  QK_NORM = False
+class PileDCLlamaMediumSWNoOKNorm(PileDCLlamaMediumSW):  # should be NoQKNorm
+  QK_NORM = False  # loss bump @710 after a preemption
 
 @experiment_registry.register
-class PileDCLlamaMediumNoOKNorm(PileDCLlamaMedium):
+class PileDCLlamaMediumSWNoQKNorm(PileDCLlamaMediumSWNoOKNorm):  # fix classname and rerun
+  pass
+
+@experiment_registry.register
+class PileDCLlamaMediumSWNoWin(PileDCLlamaMediumSWNoWinNoQKNorm):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+
+@experiment_registry.register
+class PileDCLlamaMediumNoOKNorm(PileDCLlamaMedium):  # should be NoQKNorm
   QK_NORM = False
 
 @experiment_registry.register
@@ -3284,6 +3382,47 @@ class C4DCLlamaMedium1Kx16NoQKNorm(C4DCLlamaMedium1Kx16):
 @experiment_registry.register
 class C4DCLlamaMedium1Kx16SWNoQKNorm(C4DCLlamaMedium1Kx16SW):
   QK_NORM = False
+
+@experiment_registry.register
+class C4DCLlamaXL1Kx16(DataParams, _DCConfig, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  MAX_SEQ_LEN = 1024
+
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00015) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+
+@experiment_registry.register
+class C4DCLlamaXL1Kx16SW(_SWConfig, C4DCLlamaXL1Kx16): pass
+
+@experiment_registry.register
+class C4DCLlamaXL1Kx16SWNoWinNoQKNorm(C4DCLlamaXL1Kx16SW):
+  NUM_LAYERS_PER_BLOCK = 1
+  WINDOW_SIZE = None
+  QK_NORM = False
+
+@experiment_registry.register
+class C4LlamaXL1Kx16(DataParams, C4SpmdLlamaXLHead16x128):
+  MAX_SEQ_LEN = 1024
+
+@experiment_registry.register
+class C4LlamaXL1Kx16QKNorm(C4LlamaXL1Kx16):
+  QK_NORM = True
+  
+@experiment_registry.register
+class PileLlamaMediumWin256(PileLlamaMedium):
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+
+@experiment_registry.register
+class PileLlamaMediumWin256QKNorm(PileLlamaMediumWin256):
+  QK_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumQKNorm(PileLlamaMedium):
+  QK_NORM = True
+
+@experiment_registry.register
+class PileGPTMediumQKNorm(PileGPTMedium):
+  QK_NORM = True
 
 class _SmallConfig(_CommonConfig):
   LR_COS_WARMUP = 48
@@ -4258,9 +4397,9 @@ class Pythia7BLSP(DataParams, C4SpmdGpt37BRoPE):
 @experiment_registry.register
 class BaseEval():
     TRAINING_NUM_BATCHES_TO_SKIP = None
-    ICI_MESH_SHAPE = [1, 32, 1]
-    PERCORE_BATCH_SIZE = 32
-    LM_HEAD_CHUNK_SIZE = None
+    ICI_MESH_SHAPE = [1, 16, 1]
+    PERCORE_BATCH_SIZE = 64
+    LM_HEAD_CHUNK_SIZE = 512
     FPROP_DTYPE = jnp.bfloat16
     SHUFFLE = {"train": False, "test": False}
     ONLY_EVAL = True
@@ -4291,12 +4430,12 @@ class FlanMiniEval(BaseEval):
     ACC_BATCH_MEAN = True
 
     DATA_PATH = {
-                'train': 'gs://common_datasets/pythia_model_test/flan_test2/', 
-                'test':  'gs://common_datasets/pythia_model_test/flan_test2/', 
+                'train': 'gs://common_datasets/pythia_model_test/flan_test3/', 
+                'test':  'gs://common_datasets/pythia_model_test/flan_test3/', 
                 }
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
-    EVAL_LOOP_NUM_BATCHES = 80
+    EVAL_LOOP_NUM_BATCHES = 320
 
 @experiment_registry.register
 class PilePythiaXLDynWFFN8HD64Win256AlignedPileEval(PileEval, PilePythiaXLDynWFFN8HD64Win256Aligned):
@@ -4336,7 +4475,7 @@ class PilePythia7B256x1DynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia7
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia7B256x1DynWFFN16HD128Win256Aligned):
-  TASK_NAME = 'SelfModelFlanMiniSmallPile'
+  TASK_NAME = 'SelfModelFlanMini0121'
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256PileEval(PileEval, PilePythia7B256x1DynWFFN16HD128Win256):
@@ -4404,7 +4543,7 @@ class PilePythia3BDynWFFN16HD128Win256AlignedPileEval(PileEval, PilePythia3BDynW
 
 @experiment_registry.register
 class PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval(FlanMiniEval, PilePythia3BDynWFFN16HD128Win256Aligned):
-  TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEvalSmallPile'
+  TASK_NAME = 'PilePythia3BDynWFFN16HD128Win256AlignedFlanMiniEval0121'
 
 class MyDatasets(base_input.BaseInput):
     path: Optional[str] = None
