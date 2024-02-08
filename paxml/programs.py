@@ -48,6 +48,9 @@ from praxis import trees
 import tensorflow.compat.v2 as tf
 
 from paxml import profiling  # mapped to internal
+from jax.experimental.multihost_utils import host_local_array_to_global_array
+from jax.sharding import PartitionSpec as P
+
 
 JTensor = pytypes.JTensor
 NestedJTensor = pytypes.NestedJTensor
@@ -301,12 +304,24 @@ class BaseTrainProgram(Program):
     # Verify user-provided spec matches the first batch's structure.
     if step == self._initial_step and train_p.enforce_input_specs:
       self._partitioner.check_input_spec(model_inputs)
-# lsp
-#    model_inputs = self._partitioner.preprocess_inputs(
-#        self._train_input,
-#        model_inputs,  ## First two args can be consolidated
-#        self.train_input_partition_spec(model_inputs),
-#    )
+
+    if len(self._partitioner._mesh_names) == 3:
+        # lsp: full shard data to local devices and make global array
+        model_inputs = self._partitioner.preprocess_inputs(
+            self._train_input,  # train_input SeqIOInput
+            model_inputs,  ## First two args can be consolidated
+            self.train_input_partition_spec(model_inputs), # shard方式
+        )
+    elif len(self._partitioner._mesh_names) == 2:
+        # lsp: 兼容full shard and (replica, data) shard, 但是速度相比于 full shard 稍微慢0.2%
+        model_inputs = host_local_array_to_global_array(
+                                                    model_inputs, 
+                                                    self._partitioner.global_mesh, 
+                                                    P(tuple(self._partitioner._mesh_names), None)
+                                                    )
+    else:
+        raise ValueError('‘_mesh_names’ attribute array length is not equal 2 or 3......')
+    
     logging.log_first_n(logging.INFO, '[PAX STATUS]:  Retrieved inputs.', 5)
 
     # Waits if it reaches max inflight steps. We do this after retrieving the
@@ -505,12 +520,12 @@ class BaseTrainProgram(Program):
       else:
         logging.debug('  Retrieved eval model_inputs.')
         logging.debug('  Performing eval_step() runs on training split.')
-# lsp
-#        eval_inputs = self._partitioner.preprocess_inputs(
-#            self._train_input,
-#            eval_inputs,
-#            self.train_input_partition_spec(eval_inputs),
-#        )
+        
+        eval_inputs = self._partitioner.preprocess_inputs(
+            self._train_input,
+            eval_inputs,
+            self.train_input_partition_spec(eval_inputs),
+        )
 
         eval_state = get_eval_train_state(
             self._task, new_state, self._task.train.eval_use_ema_states
@@ -865,10 +880,10 @@ class BaseEvalProgram(Program):
               partitioning_spec=self.eval_input_partition_spec(eval_inputs),
           )
       )
-# lsp
-#      eval_inputs = self._partitioner.preprocess_inputs(
-#          self.eval_input, eval_inputs, supported_input_partition_spec
-#      )
+      
+      eval_inputs = self._partitioner.preprocess_inputs(
+          self.eval_input, eval_inputs, supported_input_partition_spec
+      )
       eval_outputs = self.eval_step(
           state,
           self._eval_prng_seed,
