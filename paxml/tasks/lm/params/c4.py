@@ -685,6 +685,7 @@ def configure_gpt3_task(
       transformer_layer_p.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
       transformer_layer_p.tr_fflayer_tpl.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
       model_p.lm_tpl.final_ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+      transformer_layer_p.ngh_tpl.rmsnorm_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD # mqy
     if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
       transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
       transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
@@ -703,6 +704,15 @@ def configure_gpt3_task(
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
+    #mqy ngh 
+    if prefix == 'early_' and hasattr(cls, 'USE_NGH'+ '_EARLY'): transformer_layer_p.use_ngh = cls.USE_NGH_EARLY
+    if prefix == '' and hasattr(cls, 'USE_NGH'): transformer_layer_p.use_ngh = cls.USE_NGH
+    for name in ['use_rotary_position_emb', 'shift_key', 'use_gate_activation', 'multiply_gate', 'use_logit_scale', 'use_ffn',
+                  'use_relu2_attn', 'use_qk_norm', 'relu_bias_init']:
+        NAME = name.upper() + '_NGH'
+        if hasattr(transformer_layer_p,'ngh_tpl') and hasattr(cls, NAME):
+          setattr(transformer_layer_p.ngh_tpl, name, getattr(cls, NAME))
+
     # XD
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
@@ -726,7 +736,8 @@ def configure_gpt3_task(
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
         'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
         'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
-        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
+        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity', 'tanh2silu',
+        'softmax_dw1', 'softmax_dw2', 'generate_dwg_param',
     ]
     for name in ['input_activation_cls', 'use_input_bias', 'merge_dw_op', 'merge_dw_op2',
         'use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
@@ -3269,6 +3280,50 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileNGHLlamaMedium(PileLlamaMedium):   # v3 0.518 mqy
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS = 29 # 24 - 1 +6
+  NUM_LAYERS_PER_BLOCK = 5 # 3X1
+  NUM_LAYERS_PER_BLOCK_EARLY = 4 # 2X1
+  USE_NGH = [False, False, False, True, False]
+  USE_NGH_EARLY = [False, False, True, False]
+
+@experiment_registry.register
+class PileNGHLlamaMediumRope(PileNGHLlamaMedium):  #mqy
+  USE_ROTARY_POSITION_EMB_NGH = True
+
+@experiment_registry.register
+class PileNGHLlamaMediumNoshiftKey(PileNGHLlamaMedium): #mqy
+  SHIFT_KEY_NGH = False
+
+@experiment_registry.register
+class PileNGHLlamaMediumNogate(PileNGHLlamaMedium): #mqy
+  MULTIPLY_GATE_NGH = False
+  USE_GATE_ACTIVATION_NGH = False
+
+@experiment_registry.register
+class PileNGHLlamaMediumLogitScale(PileNGHLlamaMedium): #mqy
+  USE_LOGIT_SCALE_NGH = True
+
+@experiment_registry.register
+class PileNGHLlamaMediumLogitScaleNogateFFN(PileNGHLlamaMedium): #mqy
+  USE_LOGIT_SCALE_NGH = True
+  USE_FFN_NGH = True
+  MULTIPLY_GATE_NGH = False
+  USE_GATE_ACTIVATION_NGH = False
+
+@experiment_registry.register
+class PileNGHLlamaMediumRelu2Attn(PileNGHLlamaMedium): #mqy
+  USE_RELU2_ATTN_NGH = True
+
+@experiment_registry.register
+class PileNGHLlamaMediumLoigitScaleQKnormRelu2AttnBias16(PileNGHLlamaMedium): #mqy
+  USE_LOGIT_SCALE_NGH = True
+  USE_RELU2_ATTN_NGH = True
+  USE_QK_NORM_NGH = True 
+  RELU_BIAS_INIT_NGH = 16 # 0.5 * sqrt(model_dim)
+
+@experiment_registry.register
 class PileGPTMedium(C4SpmdGPTSepEmb, PileLlamaMedium):
   HIDDEN_DIMS = 4096  # v3 0.530
   # TODO: _stepsx4 run should restart @42000
@@ -3373,6 +3428,24 @@ class PileDCLlamaMediumDWDDNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNorm):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormTgt(PileDCLlamaMediumDWDDNoQKNorm):
   SRC_DEPENDENT = False  # v4 0.457
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSiludd(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy
+  PROBS_DW_ACTIVATION_CLS = layers.SiLU
+  LOGITS_DW_ACTIVATION_CLS = layers.SiLU
+  TANH2SILU = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSoftmaxDw1(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy
+  SOFTMAX_DW1 = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSoftmaxDw2(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy
+  SOFTMAX_DW2 = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtGatedDw(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy
+  GENERATE_DWG_PARAM = True
 
 @experiment_registry.register
 class PileDCLlamaMediumNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNormSrc):
