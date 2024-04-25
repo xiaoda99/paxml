@@ -318,6 +318,8 @@ class TransformerBertPmapAdam(base_experiment.BaseExperiment):
           self.CHECKPOINT_POLICY)
     else:
       model_p.lm_tpl.stacked_transformer_tpl = stacked_transformer_tpl
+      model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = (
+          self.CHECKPOINT_POLICY)
 
     softmax_init = WeightInit.Gaussian(1.0 / math.sqrt(self.MODEL_DIMS))
     model_p.lm_tpl.softmax_tpl.params_init = softmax_init
@@ -672,7 +674,8 @@ class TransformerLmSpmdAdafactor(base_experiment.BaseExperiment):
           self.CHECKPOINT_POLICY)
     else:
       model_p.lm_tpl.stacked_transformer_tpl = stacked_transformer_tpl
-
+      model_p.lm_tpl.stacked_transformer_tpl.checkpoint_policy = ( #mqy
+          self.CHECKPOINT_POLICY)
     # Enable bf16.
     model_p.fprop_dtype = self.FPROP_DTYPE
 

@@ -1052,15 +1052,26 @@ class PjitPartitioner(Partitioner):
     extra_kwargs = dict(in_axis_resources=fn_in_partition_specs)
     if not use_pspec_on_array_inputs:
       extra_kwargs = {}
-    pjitted_fn = pjit.pjit(
-        step_fn,
-        out_axis_resources=fn_out_partition_specs,
-        # For training, TrainState is the first argument and return value. We
-        # setup donation/alias to minimize device memory usage.
-        donate_argnums=() if is_eval else (0,),
-        static_argnums=(3,),  # For static_args.
-        **extra_kwargs,
-    )
+    if jax.__version__ >= '0.4.25':
+      pjitted_fn = pjit.pjit(
+          step_fn,
+          out_shardings=fn_out_partition_specs,
+          # For training, TrainState is the first argument and return value. We
+          # setup donation/alias to minimize device memory usage.
+          donate_argnums=() if is_eval else (0,),
+          static_argnums=(3,),  # For static_args.
+          **extra_kwargs,
+      )
+    else:
+      pjitted_fn = pjit.pjit(
+          step_fn,
+          out_axis_resources=fn_out_partition_specs,
+          # For training, TrainState is the first argument and return value. We
+          # setup donation/alias to minimize device memory usage.
+          donate_argnums=() if is_eval else (0,),
+          static_argnums=(3,),  # For static_args.
+          **extra_kwargs,
+      )
     return trainer_lib.bind_mesh(pjitted_fn, self.global_mesh)
 
   def _get_state_unpadded_shapes(self, metadata: TrainStateMetadata):

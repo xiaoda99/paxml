@@ -676,7 +676,22 @@ def configure_gpt3_task(
         fdl.get_callable(stacked_p), transformers.StackedTransformerRepeated
     ):
       stacked_p = stacked_p.block
+    
+    if hasattr(stacked_p, 'pre_compute_atten_mask'):
+      stacked_p.pre_compute_atten_mask = getattr(cls, 'PRE_COMPUTE_ATTEN_MASK', True)
+
     transformer_layer_p = stacked_p.transformer_layer_params_tpl
+    if getattr(cls, prefix.upper() + 'SHARED_STACK_TFM', False): #mqy
+      stacked_p.shared_weight_layer_id = prefix + 'shared_stack_tfm'
+    
+    for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
+                 'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'comp_dense_diff', 'dense_bias_init_method']: # mqy
+      NAME = name.upper() 
+      if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
+        NAME = NAME + '_EARLY'
+      if hasattr(cls, NAME):
+        setattr(stacked_p, name, getattr(cls, NAME))
 
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
@@ -708,19 +723,20 @@ def configure_gpt3_task(
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
                 'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
                 'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
-                'dim_per_head_v', 'value_gate_activation_cls', 'o_gate_activation_cls',
+                'dim_per_head_v', 'value_gate_activation_cls', 'o_gate_activation_cls', 'o_gate_rank',
                 'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
-                'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls',
+                'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
+                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
-      if hasattr(cls, NAME):
+      if hasattr(cls, NAME) and (not NAME.startswith('WINDOW_SIZE') or getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None):
         setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
-    dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
+    dynamic_w_attrs = ['dynamic_w_init', 'dynamic_w2_init', 'dynamic_d_init', 
         'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
         'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias', 'decompose_dynamic_w',
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
@@ -745,8 +761,8 @@ def configure_gpt3_task(
         setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
     if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
       transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
-      if getattr(cls, 'WINDOW_SIZE', None) is not None:
-        transformer_layer_p.tr_atten_tpl.window_size = cls.WINDOW_SIZE
+      # if getattr(cls, 'WINDOW_SIZE', None) is not None:
+      #   transformer_layer_p.tr_atten_tpl.window_size = cls.WINDOW_SIZE
       for name in dynamic_w_attrs:
         NAME = name.upper()
         if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -2572,6 +2588,34 @@ class PilePythia7B256x1DynWFFN16HD128Win256Aligned(PythiaInit7B, PilePythia7B256
   CHECKPOINT_MAX_TO_KEEP = 2
 
 @experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGQW(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  SRC_DEPENDENT = False # LG query wise # v4:
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLL(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 # v4:0.1403
+  NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLLQW(PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGLL): #mqy
+  SRC_DEPENDENT = False # query wise # v4:
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedWindowLGL6(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  WINDOW_SIZE = [256,None,256,256,256,256,256,256] #LGL6 local:global 7:1 # v4: 0.1335
+  NUM_LAYERS_PER_BLOCK = 8 
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedEarlyWinLGWinLGLLLL(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy
+  NUM_EARLY_LAYERS = 2
+  NUM_LAYERS_PER_BLOCK_EARLY = 2
+  WINDOW_SIZE_EARLY = [256, None]
+
+  WINDOW_SIZE = [256,None,256,256,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 6 
+
+
+@experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256TransLogits(PilePythia7B256x1DynWFFN16HD128Win256):
   TRANSPOSE_LOGITS = True  # v4 0.123 v4 0.646, BTNS v3 0.06459
   SUMMARY_INTERVAL_STEPS = 5
@@ -2985,9 +3029,142 @@ class PileDCLlama7B2Kx4x256x1DWDD(PileDCLlama7B2Kx4x256x1):
   USE_STATIC_W = False
 
 @experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGLL(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 # v3 0.084487
+  NUM_LAYERS_PER_BLOCK = 4 
+
+# @experiment_registry.register
+# class PileDCLlama7B2Kx4x256x1DWDDWindowLGLLRerun(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+#   WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 # v3 0.08448 ctime 131
+#   NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGx2x8(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  WINDOW_SIZE = [256,None,256,None] # v3 0.0796 ctime 141
+  NUM_LAYERS_PER_BLOCK = 4
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGx16(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  WINDOW_SIZE = [256,None] # v3 0.08010  ctime: 72s
+  NUM_LAYERS_PER_BLOCK = 2
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGx16Remat(PileDCLlama7B2Kx4x256x1DWDDWindowLGx16): #mqy
+  REMAT = True # LGx16 Remat v3 0.07030  ctime 80
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGx16RematQW(PileDCLlama7B2Kx4x256x1DWDDWindowLGx16Remat): #mqy
+  SRC_DEPENDENT = False  # LGx16 Remat QW v3 0.07729 ctime 
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGLLx2x4(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  WINDOW_SIZE = [256,None,256,256,256,None,256,256] 
+  NUM_LAYERS_PER_BLOCK = 8
+  REMAT = True # LGLLx2x4 Remat v3 0.0717
+
+# @experiment_registry.register
+# class PileDCLlama7B2Kx4x256x1DWDDWindowLGLLx2x4Remat0(PileDCLlama7B2Kx4x256x1DWDDWindowLGLLx2x4): #mqy
+#   REMAT = False #v3 0.0737
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGLLRemat(PileDCLlama7B2Kx4x256x1DWDDWindowLGLL): #mqy
+  REMAT = True # LGLLx8 Remat v3 0.07305 ctime 148
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGLLRematQW(PileDCLlama7B2Kx4x256x1DWDDWindowLGLLRemat): #mqy
+  SRC_DEPENDENT = False # LGLLx8 QW Remat v3 0
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGL6(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  WINDOW_SIZE = [256,None,256,256,256,256,256,256] #LGL6 local:global 7:1 # v3 0.07624
+  NUM_LAYERS_PER_BLOCK = 8 
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGL6Remat(PileDCLlama7B2Kx4x256x1DWDDWindowLGL6): #mqy
+  REMAT = True # (LGL6)x4 Remat v3 0.07410  ctime 255s
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDWindowLGL6RematQW(PileDCLlama7B2Kx4x256x1DWDDWindowLGL6Remat): #mqy
+  SRC_DEPENDENT = False # (LGL6)x4 Remat QW v3 0.07805 ctime 
+
+# @experiment_registry.register
+# class PileDCLlama7B2Kx4x256x1DWDDWindowLGL6Norepeat(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+#   WINDOW_SIZE = [256,None,256,256,256,256,256,256]*4 #LGL6 local:global 7:1 # v3 0.07624
+#   USE_REPEATED_LAYER = False
+#   REMAT = True
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDEarlyWinLGLLWinLGLL(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  NUM_EARLY_LAYERS = 4
+  NUM_LAYERS_PER_BLOCK_EARLY = 4 # test early transformer speed 
+  WINDOW_SIZE_EARLY = [256, None, 256, 256]
+
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PileDCLlama7B2Kx4x256x1DWDDEarlyWinLGWinLGLLLL(PileDCLlama7B2Kx4x256x1DWDD): #mqy
+  NUM_EARLY_LAYERS = 2
+  NUM_LAYERS_PER_BLOCK_EARLY = 2
+  WINDOW_SIZE_EARLY = [256, None]
+
+  WINDOW_SIZE = [256,None,256,256,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 6 
+
+@experiment_registry.register
 class PileLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, _Llama7B):
-  QUERY_CHUNK_SIZE = 512  # v3
+  QUERY_CHUNK_SIZE = 512  # v3 0.09602
   # pass  # v3
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256NoWindow(PileLlama7B2Kx4x256x1): #mqy
+  QUERY_CHUNK_SIZE = 256  # v3 0.1006
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1NoWindowRemat(PileLlama7B2Kx4x256x1): #mqy
+  REMAT = True  # v3 0.09338
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1NoWindowRemat0(PileLlama7B2Kx4x256x1): #mqy
+  REMAT = False  # v3 
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLG(PileLlama7B2Kx4x256x1): #mqy
+  QUERY_CHUNK_SIZE = 256  # v3 0.1009
+  WINDOW_SIZE = [256, None]
+  NUM_LAYERS_PER_BLOCK = 2
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLGRemat(PileLlama7B2Kx4x256x1QC256WindowLG): #mqy
+  REMAT = True  # v3 0.09017
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLGLLRemat(PileLlama7B2Kx4x256x1): #mqy
+  QUERY_CHUNK_SIZE = 256  # v3 0.08849
+  WINDOW_SIZE = [256, None, 256, 256]
+  NUM_LAYERS_PER_BLOCK = 4
+  REMAT = True
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLGLLRemat0(PileLlama7B2Kx4x256x1QC256WindowLGLLRemat): #mqy
+  REMAT = False # v3 0.1011
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLGL6Remat(PileLlama7B2Kx4x256x1): #mqy
+  QUERY_CHUNK_SIZE = 256  # v3 0.08764
+  WINDOW_SIZE = [256, None, 256, 256, 256, 256, 256, 256]
+  NUM_LAYERS_PER_BLOCK = 8
+  REMAT = True
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowLGL6Remat0(PileLlama7B2Kx4x256x1QC256WindowLGL6Remat): #mqy
+  REMAT = False # v3 0.10117
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1QC256WindowGG(PileLlama7B2Kx4x256x1): #mqy
+  QUERY_CHUNK_SIZE = 256  # v3 0.09847
+  WINDOW_SIZE = [None, None]
+  NUM_LAYERS_PER_BLOCK = 2
 
 class _TrainConfig2Kx8x128x1(_TrainConfig2Kx2x512x1):
   PERCORE_BATCH_SIZE = 8
@@ -3045,6 +3222,12 @@ class _XLConfig(_CommonConfig):
 @experiment_registry.register
 class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
+
+@experiment_registry.register
+class PileLlamaXLDense1x1(PileLlamaXL):
+  DENSE_CONN = True
+  REMAT = True
+  USE_REPEATED_LAYER = False
 
 @experiment_registry.register
 class PileLlamaXLHead16x128(PileLlamaXL):
@@ -3269,6 +3452,443 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumHead8(PileLlamaMedium): #mqy
+  NUM_HEADS = 8
+  DIMS_PER_HEAD = 128
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1(PileLlamaMedium): #mqy
+  DENSE_CONN = True
+  REMAT = True
+  USE_REPEATED_LAYER = False
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicDebug(PileLlamaMediumDense1x1): #mqy
+  DYNAMIC_DENSE = True
+  DEBUG = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1Dynamic(PileLlamaMediumDense1x1): #mqy
+  DYNAMIC_DENSE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGelu(PileLlamaMediumDense1x1Dynamic): #mqy
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  QUERY_CHUNK_SIZE = None # 128
+  LM_HEAD_CHUNK_SIZE = None # 512
+  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  PERCORE_BATCH_SIZE = 64 # for v5p
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluEmb1only(PileLlamaMediumDense1x1DynamicGelu): #mqy
+  DENSE_BIAS_INIT_METHOD = 'emb_only'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1Diff(PileLlamaMediumDense1x1): #mqy
+  COMP_DENSE_DIFF = True
+
+# @experiment_registry.register
+# class PileLlamaMediumOnormOgIdtQKactLattn(PileLlamaMedium): #mqy
+#   O_NORM = True
+#   O_GATE_ACTIVATION_CLS = layers.Identity
+#   QK_ACTIVATION_CLS = layers.SiLU # v4: 0.52575
+#   LINEAR_ATTN = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormer(PileLlamaMedium): #mqy https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/modeling_transnormer.py#L182-L259
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   # output norm and gate
+#   O_NORM = True
+#   O_GATE_ACTIVATION_CLS = layers.Identity
+
+#   # linear attetnion with LRPE-d and exp_decay
+#   USE_ROTARY_POSITION_EMB = False # disable rope
+#   INTERNAL_ENABLE_QUERY_SCALE = False # disable query scale
+#   QUERY_CHUNK_SIZE = None # disable query chunk
+
+#   LINEAR_ATTN = True
+#   QK_ACTIVATION_CLS = layers.SiLU
+#   USE_SLOPE_RATE = True #  exp_decay for all layers
+#   LRPE_LAYERS = [0] # use LRPE-d in the first layer only  https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/config.json#L22-L53
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixSlope(PileLlamaMediumTransNormer): #mqy
+#   FIX_SLOPE = True # placeholder 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerDebug2(PileLlamaMediumTransNormer): #mqy
+#   FIX_SLOPE = True # placeholder 
+#   INTERNAL_ENABLE_QUERY_SCALE = True 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerScaleQ(PileLlamaMediumTransNormer): #mqy
+#   # FIX_SLOPE = True # placeholder 
+#   INTERNAL_ENABLE_QUERY_SCALE = True 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerScaleQNoStaticPE(PileLlamaMediumTransNormer): #mqy
+#   INTERNAL_ENABLE_QUERY_SCALE = True 
+
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerScaleQNoStaticPENoLrpe(PileLlamaMediumTransNormerScaleQNoStaticPE): #mqy OOM
+#   LRPE_LAYERS = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerScaleQNoStaticPEOgnorm0(PileLlamaMediumTransNormerScaleQNoStaticPE): #mqy
+#    O_GROUPNORM = False
+
+@experiment_registry.register
+class PileLlamaMediumHead64(PileLlamaMedium): #mqy
+  NUM_HEADS = 64
+  DIMS_PER_HEAD = 16
+
+@experiment_registry.register
+class PileLlamaMediumHead64Head16Interleave(PileLlamaMedium): #mqy
+  NUM_LAYERS_PER_BLOCK = 2
+  NUM_HEADS = [64,16] 
+  DIMS_PER_HEAD = [16,64]
+
+@experiment_registry.register
+class PileLlamaXLRematDebug(PileLlamaXL): #mqy
+  REMAT = True
+  USE_REPEATED_LAYER = False  # [1,64,1]: 0.370
+  # ICI_MESH_SHAPE = [1, 16, 4] # 0.2008
+  # O_GATE_ACTIVATION_CLS = layers.Identity
+
+# @experiment_registry.register
+# class PileLlamaXLTransNormerBase(PileLlamaXL): #mqy https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/modeling_transnormer.py#L182-L259
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   # output norm and gate
+#   O_NORM = True
+#   O_GROUPNORM = False # rmsnorm along model_dim instead of head_dim
+#   O_GATE_ACTIVATION_CLS = layers.Identity
+#   # linear attetnion with LRPE-d and exp_decay, scale query
+#   USE_ROTARY_POSITION_EMB = False # disable rope
+#   INTERNAL_ENABLE_QUERY_SCALE = False # disable query scale
+#   LINEAR_ATTN = True
+#   QK_ACTIVATION_CLS = layers.SiLU
+#   USE_SLOPE_RATE = True #  exp_decay for all layers
+#   LRPE_LAYERS = [0] # use LRPE-d in the first layer only  https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/config.json#L22-L53
+
+#   EMBEDDING_LOOKUP_STYLE = 'index'
+#   LM_HEAD_CHUNK_SIZE = 512 # 512
+#   CHECKPOINT_POLICY = layers.AutodiffCheckpointType.SAVE_NOTHING
+
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+  
+# @experiment_registry.register
+# class PileLlamaXLTransNormerBaseDebug(PileLlamaXLTransNormerBase):
+# # class PileLlamaXLTransNormerBaseDebug(PileLlamaXL):
+#   # O_GATE_ACTIVATION_CLS = layers.Identity
+#   # LRPE_LAYERS = None
+#   # ICI_MESH_SHAPE = [1, 16, 4] # 0.209
+#   ICI_MESH_SHAPE = [1, 64, 1]
+
+  
+# @experiment_registry.register
+# class PileLlamaXLTransNormerBaseMixNNNT(PileLlamaXLTransNormerBase): #mqy
+#   O_NORM = [True, True, True, False] * 6 
+#   O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] * 6
+#   USE_ROTARY_POSITION_EMB = [False, False, False, True] * 6
+#   INTERNAL_ENABLE_QUERY_SCALE = [False, False, False, True] * 6
+#   LINEAR_ATTN = [True, True, True, False] * 6
+#   QK_ACTIVATION_CLS = [layers.SiLU, layers.SiLU, layers.SiLU,None] * 6 
+
+# @experiment_registry.register
+# class PileLlamaXLTransNormerSimpleMixNNNT(PileLlamaXLTransNormerBase): #mqy
+#   REMAT = False
+#   USE_REPEATED_LAYER = True # v4: 0.464
+#   USE_SLOPE_RATE = False
+#   LRPE_LAYERS = None
+#   USE_ROTARY_POSITION_EMB = True
+#   QK_ACTIVATION_CLS = None
+#   NUM_LAYERS_PER_BLOCK = 4 
+#   O_NORM = [True, True, True, False] 
+#   O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] 
+#   LINEAR_ATTN = [True, True, True, False] 
+
+# @experiment_registry.register
+# class PileLlamaXLTransNormerSimpleMixNNNTProjTProbsProjTLogits(_DC, PileLlamaXLTransNormerSimpleMixNNNT): #mqy
+#   DYNAMIC_SQUEEZE_RATIO = 16  # 8 -> 16
+#   DYNAMIC_W_HIDDEN_DIM = 128  # 64 -> 128  v4 0.267
+#   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # should be 5e-5 for NUM_HEAD 32. sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+#   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00015) 
+#   QK_NORM = False  # v4: 0.375
+#   WINDOW_SIZE = None
+#   USE_STATIC_W = False 
+#   NUM_LAYERS_PER_BLOCK = 4 
+#   PROJECT_LOGITS = [False, False, False, True]
+#   PROJECT_PROBS = [False, False, False, True]
+
+# @experiment_registry.register
+# class PileLlamaXLTransNormerBaseMixNNNTProjTProbsProjTLogits(_DC, PileLlamaXLTransNormerBaseMixNNNT): #mqy
+#   DYNAMIC_SQUEEZE_RATIO = 16  # 8 -> 16
+#   DYNAMIC_W_HIDDEN_DIM = 128  # 64 -> 128  v4 0.267
+#   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00013)  # should be 5e-5 for NUM_HEAD 32. sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+#   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00015) 
+#   QK_NORM = False  # v4: 0.345
+#   WINDOW_SIZE = None
+#   USE_STATIC_W = False 
+#   PROJECT_LOGITS = [False, False, False, True] * 6
+#   PROJECT_PROBS = [False, False, False, True] * 6
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerFix(PileLlamaMedium): #mqy https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/modeling_transnormer.py#L182-L259
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  # output norm and gate
+  O_NORM = True
+  O_GROUPNORM = False # rmsnorm along model_dim instead of head_dim
+  O_GATE_ACTIVATION_CLS = layers.Identity
+  # linear attetnion with LRPE-d and exp_decay, scale query
+  USE_ROTARY_POSITION_EMB = False # disable rope
+  INTERNAL_ENABLE_QUERY_SCALE = False # disable query scale
+  QUERY_CHUNK_SIZE = 128
+  LINEAR_ATTN = True
+  QK_ACTIVATION_CLS = layers.SiLU
+  USE_SLOPE_RATE = True #  exp_decay for all layers
+  LRPE_LAYERS = [0] # use LRPE-d in the first layer only  https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/config.json#L22-L53
+
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    task_p = super().task()
+    if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+    return task_p
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3(PileLlamaMediumTransNormerFix):
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid
+  SCALE_EMBEDDING = True 
+  O_GATE_RANK = 128
+  LRPE_LAYERS = None
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3DC(_DC, PileLlamaMediumTransNormerLLM3):
+  DYNAMIC_SQUEEZE_RATIO = 8  
+  DYNAMIC_W_HIDDEN_DIM = 64
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00014)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00022) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+  QK_NORM = False  # v4:
+  WINDOW_SIZE = None
+  USE_STATIC_W = False 
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3DCPost(PileLlamaMediumTransNormerLLM3DC):
+  PROJECT_LOGITS = False
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3MixNT(PileLlamaMediumTransNormerLLM3): 
+  O_NORM = [True, False] * 12 
+  O_GATE_ACTIVATION_CLS = [layers.Sigmoid, None] * 12
+  INTERNAL_ENABLE_QUERY_SCALE = [False, True] * 12
+  USE_ROTARY_POSITION_EMB = [False, True] * 12
+  LINEAR_ATTN = [True, False] * 12
+  QK_ACTIVATION_CLS = [layers.SiLU, None] * 12 
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3MixNTProjTProbsLogits(_DC, PileLlamaMediumTransNormerLLM3MixNT): #mqy
+  DYNAMIC_SQUEEZE_RATIO = 8  
+  DYNAMIC_W_HIDDEN_DIM = 64
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.00014)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00022) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
+  QK_NORM = False  # v4:
+  WINDOW_SIZE = None
+  USE_STATIC_W = False 
+  PROJECT_LOGITS = [False, True] * 12
+  PROJECT_PROBS = [False, True] * 12
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerLLM3MixNTProjProbsLogits(PileLlamaMediumTransNormerLLM3MixNTProjTProbsLogits): #mqy
+  PROJECT_LOGITS = True
+  PROJECT_PROBS = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixWarmup2p(PileLlamaMediumTransNormerFix):
+#   LR_COS_WARMUP = 270 # 135 * 2, 2%
+#   LR_COS_DECAY_START = LR_COS_WARMUP + 1
+#   # O_GATE_ACTIVATION_CLS = layers.SiLU
+#   # SCALE_EMBEDDING = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixOgateSiluScaleEmb(PileLlamaMediumTransNormerFix):
+#   O_GATE_ACTIVATION_CLS = layers.SiLU
+#   SCALE_EMBEDDING = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixScaleEmb(PileLlamaMediumTransNormerFix):
+#   SCALE_EMBEDDING = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixOgateSilu(PileLlamaMediumTransNormerFix):
+#   O_GATE_ACTIVATION_CLS = layers.SiLU
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixOgateSiluScaleEmbFixOnorm(PileLlamaMediumTransNormerFixOgateSiluScaleEmb):
+#   FIX_ONORM = True # placeholder: fix o_norm in not transpose_logits branch best 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixOgateSiluScaleEmbFixOnormFp32ProbsValue(PileLlamaMediumTransNormerFixOgateSiluScaleEmb):
+#   FLOAT32_PROBS = True # fix transnormer probs out of bound
+#   FLOAT32_LOGITS = True
+#   FLOAT32_VALUE = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixOgateSiluScaleEmb4xLong(PileLlamaMediumTransNormerFixOgateSiluScaleEmb):
+#   LR_COS_WARMUP = int(540) #
+#   LR_COS_DECAY_START = LR_COS_WARMUP + 1
+#   ICI_MESH_SHAPE = [1, 32, 1]
+#   PERCORE_BATCH_SIZE = 2 # 8
+#   LR_COS_DECAY_END = 54000 # 135 * 4
+#   SAVE_ON_STEPS = [54000] # list(range(3000, 15000, 3000))
+#   CHECKPOINT_EVERY_N_STEPS = 1000
+
+# @experiment_registry.register
+# class PileLlamaMedium4xLong(PileLlamaMedium):
+#   LR_COS_WARMUP = int(540) #
+#   LR_COS_DECAY_START = LR_COS_WARMUP + 1
+#   ICI_MESH_SHAPE = [1, 32, 1]
+#   PERCORE_BATCH_SIZE = 2 # 8
+#   LR_COS_DECAY_END = 54000 # 135 * 4
+#   SAVE_ON_STEPS = [54000] # list(range(3000, 15000, 3000))
+#   CHECKPOINT_EVERY_N_STEPS = 1000
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixHead8(PileLlamaMediumTransNormerFix):
+#   NUM_HEADS = 8
+#   DIMS_PER_HEAD = 128
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixHead8ScaleEmb(PileLlamaMediumTransNormerFixHead8):
+#   SCALE_EMBEDDING = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerFixHead8ScaleEmbInit0p02(PileLlamaMediumTransNormerFixHead8ScaleEmb):
+#   INIT_METHOD = 0.02
+#   EXPLICIT_INIT = True
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerFixMixNT(PileLlamaMediumTransNormerFix): 
+  O_NORM = [True, False] * 12 
+  O_GATE_ACTIVATION_CLS = [layers.Identity, None] * 12
+  USE_ROTARY_POSITION_EMB = [False, True] * 12
+  LINEAR_ATTN = [True, False] * 12
+  QK_ACTIVATION_CLS = [layers.SiLU, None] * 12 
+  QUERY_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerFixSimple(PileLlamaMediumTransNormerFix): #mqy
+  REMAT = False
+  USE_REPEATED_LAYER = True
+  USE_SLOPE_RATE = False
+  LRPE_LAYERS = None
+  USE_ROTARY_POSITION_EMB = True
+  QK_ACTIVATION_CLS = None
+
+@experiment_registry.register
+class PileLlamaMediumTransNormerFixSimpleMixNNNT(PileLlamaMediumTransNormerFixSimple): #mqy
+  NUM_LAYERS_PER_BLOCK = 4 
+  O_NORM = [True, True, True, False] 
+  O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] 
+  LINEAR_ATTN = [True, True, True, False] 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerSimple(PileLlamaMediumTransNormerBase): #mqy
+#   REMAT = False
+#   USE_REPEATED_LAYER = True
+#   USE_SLOPE_RATE = False
+#   LRPE_LAYERS = None
+#   USE_ROTARY_POSITION_EMB = True
+#   QK_ACTIVATION_CLS = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseNoScaleQ(PileLlamaMediumTransNormerBase): 
+#   INTERNAL_ENABLE_QUERY_SCALE = False # disable query scale
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseNoScaleQCheck(PileLlamaMediumTransNormerBaseNoScaleQ): 
+#   CHECK_REL_BIAS_MASK = True # placeholder 
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNT(PileLlamaMediumTransNormerBase): 
+#   O_NORM = [True, False] * 12 
+#   O_GATE_ACTIVATION_CLS = [layers.Identity, None] * 12
+#   USE_ROTARY_POSITION_EMB = [False, True] * 12
+#   LINEAR_ATTN = [True, False] * 12
+#   QK_ACTIVATION_CLS = [layers.SiLU, None] * 12 
+#   QUERY_CHUNK_SIZE = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTNoSlopeNoLrpeRopeNoQKact(PileLlamaMediumTransNormerBaseMixNT):
+#   USE_SLOPE_RATE = False
+#   LRPE_LAYERS = None
+#   USE_ROTARY_POSITION_EMB = True
+#   QK_ACTIVATION_CLS = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTBottom12LNormer(PileLlamaMediumTransNormerBaseMixNT):
+#   SLOPE_RATE_LIDXS = [lidx for lidx in range(12) for i in range(2)]
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNNNT(PileLlamaMediumTransNormerBase): 
+#   O_NORM = [True, True, True, False] * 6 
+#   O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] * 6
+#   USE_ROTARY_POSITION_EMB = [False, False, False, True] * 6
+#   LINEAR_ATTN = [True, True, True, False] * 6
+#   QK_ACTIVATION_CLS = [layers.SiLU, layers.SiLU, layers.SiLU,None] * 6 
+#   QUERY_CHUNK_SIZE = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseNoSlopeNoLrpeRopeNoQKactMixNNNT(PileLlamaMediumTransNormerBase): 
+#   USE_SLOPE_RATE = False
+#   LRPE_LAYERS = None
+#   USE_ROTARY_POSITION_EMB = True
+#   QK_ACTIVATION_CLS = None
+#   O_NORM = [True, True, True, False] * 6 
+#   O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] * 6
+#   LINEAR_ATTN = [True, True, True, False] * 6
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerScaleQNoStaticPENoqkact(PileLlamaMediumTransNormerScaleQNoStaticPE): #mqy
+#    QK_ACTIVATION_CLS = None
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerNoStaticPE(PileLlamaMediumTransNormer): 
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+
+@experiment_registry.register
+class PileLlamaMediumWindowLGLL(PileLlamaMedium): #mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PileLlamaMediumHead48(PileLlamaMedium): #mqy
+  NUM_HEADS = 48 # v3
+
+@experiment_registry.register
+class PileLlamaMediumInterShareEvery4L(PileLlamaMedium): #mqy
+  REMAT = True
+  SHARE_INTERVAL = 4   # v4 0.591
+  SHARE_MODE = 'interleave'
+  USE_REPEATED_LAYER = False
+
+@experiment_registry.register
+class PileLlamaMediumInterShareEvery8L(PileLlamaMediumInterShareEvery4L): #mqy
+  SHARE_INTERVAL = 8   # v4 
+  # SHARE_ATTN_ONLY = True
+
+@experiment_registry.register
 class PileGPTMedium(C4SpmdGPTSepEmb, PileLlamaMedium):
   HIDDEN_DIMS = 4096  # v3 0.530
   # TODO: _stepsx4 run should restart @42000
@@ -3280,6 +3900,17 @@ class PileDCLlamaMedium(PileDataParams, _DCConfig, _MediumConfig, C4SpmdLlamaMed
   DYNAMIC_W_INIT = WeightInit.Gaussian(0.00014)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
   DYNAMIC_D_INIT = WeightInit.Gaussian(0.00022) # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
   # TODO: _stepsx4 run should restart @18000
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDRelu2QKnorm(PileDCLlamaMedium): #mqy
+  RELU2_BIAS = True
+  USE_STATIC_W = False
+  QK_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDRelu2QKnormOgateOnorm(PileDCLlamaMediumDWDDRelu2QKnorm): #mqy
+  O_GATE_ACTIVATION_CLS = layers.SiLU
+  O_NORM = True  # v4: 0.35508
 
 @experiment_registry.register
 class PileDCGPTMediumDWDDNoQKNorm(C4SpmdGPTSepEmb, PileDCLlamaMedium):
@@ -3357,6 +3988,83 @@ class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
 
 @experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormQkw0init(PileDCLlamaMediumDWDD): # actually PileDCLlamaMediumDWDDQKNormQkw0init bug mqy
+  DYNAMIC_W2_INIT = WeightInit.Constant(0) 
+  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  PERCORE_BATCH_SIZE = 64 # for v5p
+
+@experiment_registry.register
+class PileDCLlamaMediumDDQKNorm(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
+  LOGITS_DYNAMIC_W_INIT = None
+  PROBS_DYNAMIC_W_INIT = None
+  DYNAMIC_W_INIT = None
+  QK_NORM = True
+  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  PERCORE_BATCH_SIZE = 64 # for v5p
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDense1x1(PileDCLlamaMediumDWDDNoQKNorm): #mqy
+  DENSE_CONN = True # compile time: 17 min, v4: 0.346
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  WINDOW_SIZE = [256, None] * 12
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDense1x1Dynamic(PileDCLlamaMediumDWDDNoQKNormDense1x1): #mqy
+  DYNAMIC_DENSE = True # complie time: 47min/0.228（qchunk128,hchunk512）, 12min/0.154(qchunk1024,hchunkNone)
+  QUERY_CHUNK_SIZE = 1024 # 128
+  LM_HEAD_CHUNK_SIZE = None # 512
+  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  PERCORE_BATCH_SIZE = 64 # for v5p
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicGelu(PileDCLlamaMediumDWDDNoQKNormDense1x1Dynamic): #mqy
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicGeluQkw0init(PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicGelu): #mqy
+  DYNAMIC_W2_INIT = WeightInit.Constant(0) 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLLG(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,256,None] #LLG local:global 2:1 
+  NUM_LAYERS_PER_BLOCK = 3 # v4 0.423
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGL(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256] #LGL local:global 2:1 
+  NUM_LAYERS_PER_BLOCK = 3 #v4 0.4509
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLLLG(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,256,256,None] #LLLG local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLL(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLLQW(PileDCLlamaMediumDWDDNoQKNormWindowLGLL): # mqy
+  SRC_DEPENDENT = False 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGLLLL(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256,256,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 6
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowGLLLLL(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [None,256,256,256,256,256] #LGLL local:global 3:1 
+  NUM_LAYERS_PER_BLOCK = 6
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormWindowLGL6(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  WINDOW_SIZE = [256,None,256,256,256,256,256,256] #LGL6 local:global 7:1 
+  NUM_LAYERS_PER_BLOCK = 8
+
+@experiment_registry.register
 class PileDCLlamaMediumDWNoQKNorm(PileDCLlamaMediumDWDDNoQKNorm):
   DYNAMIC_D_INIT = None  # v4 0.375
 
@@ -3373,6 +4081,228 @@ class PileDCLlamaMediumDWDDNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNorm):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormTgt(PileDCLlamaMediumDWDDNoQKNorm):
   SRC_DEPENDENT = False  # v4 0.457
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtSrcInterleave(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
+#   SRC_DEPENDENT = [False, True] * 12  # bug: layer_wise settings do not work
+#   TGT_DEPENDENT = [True, False] * 12
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSrcInterleaveFix(PileDCLlamaMediumDWDDNoQKNorm): #mqy
+  SRC_DEPENDENT = [False, True] # add layer_wise src_dependent and tgt_dependent config of cross_head and dynamic_weight tpl in stacked_transformer  
+  TGT_DEPENDENT = [True, False]
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormSrcTgtInterleaveFix(PileDCLlamaMediumDWDDNoQKNorm): #mqy
+  SRC_DEPENDENT = [True, False] # add layer_wise src_dependent and tgt_dependent config of cross_head and dynamic_weight tpl in stacked_transformer  
+  TGT_DEPENDENT = [False, True]
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDWithQKNormTgt(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy query_wise qk_norm baseline
+  QK_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  NUM_HEADS = 48  # v4 0.195
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48EveryOther3L(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  USE_REPEATED_LAYER = False  # v4 
+  REMAT = True
+  HIDDEN_DIMS = [1024, 1024, 1024, 3072] * 6
+  NUM_HEADS = [16,16,16,48] * 6
+  DIMS_PER_HEAD = 64
+  WINDOW_SIZE = [256, None] * 12
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48EveryOther1L(PileDCLlamaMediumDWDDNoQKNormTgtHead48EveryOther3L): #mqy
+  HIDDEN_DIMS = [1024, 3072] * 12
+  NUM_HEADS = [16,48] * 12
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48Bottom8L(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  USE_REPEATED_LAYER = False  # v3 0.233
+  REMAT = True
+  HIDDEN_DIMS = [3072] * 8 + [1024] * 16  
+  NUM_HEADS = [48] * 8 + [16] * 16
+  DIMS_PER_HEAD = 64
+  WINDOW_SIZE = [256, None] * 12
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48Middle8L(PileDCLlamaMediumDWDDNoQKNormTgtHead48Bottom8L): #mqy
+  HIDDEN_DIMS = [1024] * 8 + [3072] * 8 + [1024] * 8  # v4 
+  NUM_HEADS = [16] * 8 + [48] * 8 + [16] * 8
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtHead48Top8L(PileDCLlamaMediumDWDDNoQKNormTgtHead48Bottom8L): #mqy
+  HIDDEN_DIMS = [1024] * 16 + [3072] * 8   # v4 
+  NUM_HEADS = [16] * 16 + [48] * 8 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSharedStackTFMFix(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  SHARED_STACK_TFM = True  # v4 0.466 fix SHARED_STACK_TFM from false to True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtInterShare2Layer(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  NUM_LAYERS_PER_BLOCK = 4  # v4 
+  WINDOW_SIZE = [256, None, 256, None]
+  SHARE_INTERVAL = 2
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtShare4Layer(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  NUM_LAYERS_PER_BLOCK = 4  # v4 0.393
+  WINDOW_SIZE = None
+  SHARE_INTERVAL = 1
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtShare4AttnLayer(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  NUM_LAYERS_PER_BLOCK = 4  # v4 0.373
+  WINDOW_SIZE = None
+  SHARE_INTERVAL = 1
+  SHARE_ATTN_ONLY = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtShare2AttnLayerHead32(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy 
+  NUM_LAYERS_PER_BLOCK = 2  # v4 0.215
+  WINDOW_SIZE = None
+  SHARE_INTERVAL = 1
+  SHARE_ATTN_ONLY = True
+  NUM_HEADS = 32 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShare(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  USE_REPEATED_LAYER = False
+  REMAT = True
+  SHARE_GRADIENT = True
+  GRAD_NORM_INDIVIDUAL_VARS = True
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    if hasattr(self, 'SHARE_GRADIENT'):
+      task_p.train.learner.share_gradient = self.SHARE_GRADIENT
+    task_p.train.learner.grad_norm_individual_vars = getattr(self, 'GRAD_NORM_INDIVIDUAL_VARS', False)
+    task_p.train.learner.share_average_gradient = getattr(self, 'SHARE_AVERAGE_GRADIENT', False)
+    task_p.train.learner.share_attn_ratio = getattr(self, 'SHARE_ATTN_RATIO', None)
+    return task_p
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCstSarImdSarEvery4LAttnHead48NotShareQKNormDC(PileDCLlamaMediumDWDDNoQKNormTgtCustomShare): #mqy
+  WINDOW_SIZE = [256, None] * 12
+  SHARE_INTERVAL = 4
+  SHARE_MODE = 'immediate'
+  SHARE_ATTN_ONLY = True
+  NUM_HEADS = 48
+  QK_NORM = True
+  SHARE_QKNORM = False
+  SHARE_DYNAMIC_PROJ = False
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48(PileDCLlamaMediumDWDDNoQKNormTgtCustomShare): #mqy
+  WINDOW_SIZE = [256, None] * 12
+  SHARE_INTERVAL = 6  
+  SHARE_MODE = 'interleave'
+  SHARE_ATTN_ONLY = True
+  NUM_HEADS = 48
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48FixGradnorm(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48): #mqy
+  FIX_GRADNORM = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48AvgGd(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48): #mqy
+  SHARE_AVERAGE_GRADIENT = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNorm(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48): #mqy
+  QK_NORM = True
+  SHARE_QKNORM = False
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDC(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNorm): #mqy
+  SHARE_DYNAMIC_PROJ = False
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDCSandWichT2B2(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDC): #mqy
+  SHARE_EXCEPT_LAYERS = [0,1,22,23]
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDCRank8(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDC): #mqy
+  DYNAMIC_SQUEEZE_RATIO = 2 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDCPshareHead16(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDC): #mqy
+  SHARE_ATTN_RATIO = 1/3  # num_heads = 48 * 1/3 = 16
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnNotShareQKNormDCPshareHead4(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48NotShareQKNormDC): #mqy
+  SHARE_ATTN_RATIO = 1/4  # num_heads = 16 * 1/4 = 4
+  NUM_HEADS = 16
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnNotShareQKNormDCPshareHead4ScaleV(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnNotShareQKNormDCPshareHead4): #mqy
+  SCALE_V = True 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnNotShareQKNormDCPshareHead4SandWichT2B2(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnNotShareQKNormDCPshareHead4): #mqy
+  SHARE_EXCEPT_LAYERS = [0,1,22,23]
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48BlockIdx5(PileDCLlamaMediumDWDDNoQKNormTgtCustomShareInterShareEvery6LAttnHead48): #mqy
+  SHARE_INTERVAL_IDXS = [5]
+  NUM_HEADS = [16,16,16,16,16,64] * 4
+  HIDDEN_DIMS = [1024,1024,1024,1024,1024,4096] * 4  
+
+
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead48Repeated(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy debug
+#   USE_REPEATED_LAYER = False
+#   REMAT = True
+#   # NUM_LAYERS_PER_BLOCK = 12  # v4 0.215
+#   WINDOW_SIZE = [256, None] * 2
+#   NUM_LAYERS = 4
+#   SHARE_INTERVAL = 2   # v4 
+#   SHARE_MODE = 'interleave'
+#   SHARE_ATTN_ONLY = True
+#   NUM_HEADS = 16
+#   SHARE_GRADIENT = True
+#   GRAD_NORM_INDIVIDUAL_VARS = True
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     """Returns the task parameters."""
+#     task_p = super().task()
+#     if hasattr(self, 'SHARE_GRADIENT'):
+#       task_p.train.learner.share_gradient = self.SHARE_GRADIENT
+#     task_p.train.learner.grad_norm_individual_vars = getattr(self, 'GRAD_NORM_INDIVIDUAL_VARS', False)
+#     return task_p
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead48(PileDCLlamaMediumDWDDNoQKNormTgt): #mqy
+  USE_REPEATED_LAYER = False
+  REMAT = True
+  WINDOW_SIZE = [256, None] * 12
+  SHARE_INTERVAL = 6   # v4 
+  SHARE_MODE = 'interleave'
+  SHARE_ATTN_ONLY = True
+  NUM_HEADS = 48
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead16(PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead48): #mqy
+#   NUM_HEADS = 16
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead64BlockIdx5(PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead48): #mqy
+#   SHARE_INTERVAL_IDXS = [5]
+#   NUM_HEADS = [16,16,16,16,16,64] * 4
+#   HIDDEN_DIMS = [1024,1024,1024,1024,1024,4096] * 4  
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDWithQKNormTgtInterShareEvery6LAttnHead48NotShareQKNorm(PileDCLlamaMediumDWDDNoQKNormTgtInterShareEvery6LAttnHead48): #mqy
+#   QK_NORM = True
+#   SHARE_QKNORM = False
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDWithQKNormTgtInterShareEvery6LAttnHead48NotShareQKNormDC(PileDCLlamaMediumDWDDWithQKNormTgtInterShareEvery6LAttnHead48NotShareQKNorm): #mqy
+#   SHARE_DYNAMIC_PROJ = False
 
 @experiment_registry.register
 class PileDCLlamaMediumNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNormSrc):
@@ -3441,6 +4371,102 @@ class PileDCLlamaMediumNoQKNormProjLogitsWorkaround(PileDCLlamaMediumNoOKNorm): 
 class PileDCLlamaMediumNoQKNormProjProbsWorkaround(PileDCLlamaMediumNoOKNorm): # post_proj is created but do nothing
   PROJECT_LOGITS = False  # v4 0.355
   LOGITS_USE_STATIC_W = False
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseProjProbs(PileLlamaMediumTransNormerBase, PileDCLlamaMediumNoQKNormProjProbsWorkaround):
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   O_GATE_ACTIVATION_CLS = layers.Identity
+#   USE_ROTARY_POSITION_EMB = False # disable rope
+#   WINDOW_SIZE = [256, None] * 12
+#   LOGITS_USE_STATIC_W = False
+#   PROBS_USE_STATIC_W = False # leads to OOM
+
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjProbs(PileLlamaMediumTransNormerBaseMixNT, PileDCLlamaMediumNoQKNormProjProbsWorkaround):
+#   O_GATE_ACTIVATION_CLS = [layers.Identity, None] * 12
+#   USE_ROTARY_POSITION_EMB = [False, True] * 12
+#   QUERY_CHUNK_SIZE = 128
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   WINDOW_SIZE = [256, None] * 12
+#   LOGITS_USE_STATIC_W = False
+#   PROBS_USE_STATIC_W = False # leads to OOM
+
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjProbsProjLogits(PileLlamaMediumTransNormerBaseMixNTProjProbs):
+#   PROJECT_LOGITS = True
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNNNTProjTProbsProjTLogitsNoWindow(PileLlamaMediumTransNormerBaseMixNNNT, PileDCLlamaMediumNoQKNormProjProbsWorkaround):
+#   O_GATE_ACTIVATION_CLS = [layers.Identity,layers.Identity,layers.Identity, None] * 6
+#   USE_ROTARY_POSITION_EMB = [False,False,False,True] * 6
+#   QUERY_CHUNK_SIZE = 128
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   WINDOW_SIZE = None
+#   LOGITS_USE_STATIC_W = False
+#   PROBS_USE_STATIC_W = False # leads to OOM
+#   PROJECT_LOGITS = [False, False, False, True] * 6
+#   PROJECT_PROBS = [False, False, False, True] * 6
+
+#   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#     task_p = super().task()
+#     if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#     return task_p
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjNProbs(PileLlamaMediumTransNormerBaseMixNTProjProbs):
+#   PROJECT_LOGITS = [True, False] * 12
+#   PROJECT_PROBS = [True, False] * 12
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjNProbsFix(PileLlamaMediumTransNormerBaseMixNTProjProbs):
+#   PROJECT_PROBS = [True, False] * 12
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjTProbsFix(PileLlamaMediumTransNormerBaseMixNTProjProbs):
+#   PROJECT_PROBS = [False, True] * 12
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseMixNTProjTProbs(PileLlamaMediumTransNormerBaseMixNTProjProbs):
+#   PROJECT_LOGITS = [False, True] * 12
+#   PROJECT_PROBS = [False, True] * 12
+
+# @experiment_registry.register
+# class PileLlamaMediumTransNormerBaseProjProbsDebug(PileDCLlamaMediumNoQKNormProjProbsWorkaround): #mqy
+#   REMAT = True
+#   USE_REPEATED_LAYER = False
+#   LOGITS_USE_STATIC_W = False
+#   PROBS_USE_STATIC_W = False
+#   # output norm and gate
+#   # O_NORM = True
+#   # O_GROUPNORM = False # rmsnorm along model_dim instead of head_dim
+#   # O_GATE_ACTIVATION_CLS = layers.Identity
+#   # # linear attetnion with LRPE-d and exp_decay, scale query
+#   # USE_ROTARY_POSITION_EMB = False # disable rope
+#   # QUERY_CHUNK_SIZE = 128 # disable query chunk
+#   # LINEAR_ATTN = True
+#   # QK_ACTIVATION_CLS = layers.SiLU
+#   # USE_SLOPE_RATE = True #  exp_decay for all layers
+#   # LRPE_LAYERS = [0] # use LRPE-d in the first layer only  https://huggingface.co/OpenNLPLab/TransNormerLLM-7B/blob/main/config.json#L22-L53
+#   WINDOW_SIZE = [256, None] * 12
+
+#   # def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+#   #   task_p = super().task()
+#   #   if self.LINEAR_ATTN or self.USE_ROTARY_POSITION_EMB: task_p.model.lm_tpl.position_emb_tpl = None 
+#   #   return task_p
 
 @experiment_registry.register
 class PileDCLlamaMediumNoQKNormNG2R1(PileDCLlamaMediumNoQKNorm):

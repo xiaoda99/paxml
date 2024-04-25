@@ -538,8 +538,16 @@ class OrbaxCheckpointManager:
       )
     # XD
     # [0, 200, 400, 800, 1600, 3200, 6400, 12800, *19200*, 25600, *38400*, 51200]
-    if jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
-      sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub']['x_layers_0']['self_attention']
+    if False and jax.process_index() == 0 and step in [0, 19200, 38400] + (np.logspace(1, 16, num=16, base=2)*100).astype(np.int64).tolist():
+      logging.info(f"layer key: {train_state.mdl_vars['params']['lm'].keys()}")
+      # logging.info(f"layer key: {train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub'].keys()}")
+      layer_keys = list(train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub'].keys())
+      if 'x_layers_0' in layer_keys:
+        layer_key = 'x_layers_0' 
+      else:
+        layer_key = layer_keys[0]
+        logging.info(f"layer key: {layer_key}")
+      sa = train_state.mdl_vars['params']['lm']['transformer']['repeat']['sub'][layer_key]['self_attention']
       for module_name in ['pre_proj', 'post_proj']:
         if module_name not in sa: continue
         for param_name in sa[module_name]:

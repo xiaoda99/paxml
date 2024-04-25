@@ -44,6 +44,8 @@ from praxis import py_utils
 from praxis import pytypes
 
 from paxml import checkpoints  # mapped to internal
+from functools import partial
+import operator
 
 PartitionSpec = jax.sharding.PartitionSpec
 
@@ -394,6 +396,61 @@ def initialize_model_state(
       return model.init(init_key, inputs)
 
   initial_vars = init_fn(init_key)
+  #mqy share weights
+  if hasattr(jax_task.train.learner, 'share_gradient') and jax_task.train.learner.share_gradient: 
+    ratio = jax_task.train.learner.share_attn_ratio
+    def set_kv(key_pattern, new_value, var_key, raw_value, ratio=None):
+      # return new_value if key_pattern in var_key else raw_value
+      if key_pattern in var_key:
+        if ratio is None:
+          out = new_value
+        else:
+          assert len(raw_value.shape) == 3, raw_value.shape     # shape: model_dim, num_heads, head_dim 
+          hidx = int(round(raw_value.shape[1] * ratio))
+          # raw_value[:,:hidx] = new_value
+          out = raw_value.at[:,:hidx].set(new_value)
+          # out = jnp.concatenate([new_value, raw_value[:, hidx:]], axis=1)
+      else:
+        out = raw_value
+      return out
+    def select(key_pattern, var_key, raw_value, ratio=None):
+      # return raw_value if key_pattern in var_key else 0
+      if key_pattern in var_key:
+        if ratio is None: # share qkov only 
+          out = raw_value 
+        else:
+          assert len(raw_value.shape) == 3, raw_value.shape     # shape: model_dim, num_heads, head_dim 
+          hidx = int(round(raw_value.shape[1] * ratio))
+          out = raw_value[:,:hidx]
+      else:
+        out = 0 
+      return out
+    var_keys = py_utils.extract_prefixed_keys_from_nested_map(initial_vars)
+    flat_var_keys = jax.tree_util.tree_flatten(var_keys)[0]
+    shared_dict = {}
+    for k in flat_var_keys:
+      if 'shared_' in k:
+        shared_k = 'shared_'+ k.split('shared_')[1]
+        if shared_k not in shared_dict:
+          shared_dict[shared_k] = [k]
+        else:
+          shared_dict[shared_k].append(k)
+    shared_keys = list(shared_dict.keys())
+    # shared_keys = list(set([ 'shared_'+k.split('shared_')[1] for k in flat_var_keys if 'shared_' in k ]))
+    selected_keys = []  
+    for k in shared_keys:
+      for var_key in flat_var_keys:
+        if k in var_key:
+          selected_keys.append(var_key)
+          break
+    logging.info(f'shared_weight_dict:{shared_dict}')
+    logging.info(f'shared_keys:{shared_keys}')   
+    logging.info(f'selected_keys:{selected_keys}')   
+    for k, sk in zip(shared_keys, selected_keys):
+      filtered = jax.tree_util.tree_map(partial(select, sk, ratio=ratio), var_keys, initial_vars)
+      sumed = jax.tree_util.tree_reduce(operator.add, filtered) # select one group of weight
+      initial_vars = jax.tree_util.tree_map(partial(set_kv, k, sumed, ratio=ratio), var_keys, initial_vars)
+
   logging.info(
       'initial_vars: %s', jax.tree_map(lambda x: x.shape, initial_vars)
   )

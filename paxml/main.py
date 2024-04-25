@@ -225,6 +225,7 @@ job_log_dir = None  # XD
 
 def get_tpu_type(exp_name):  # XD
   if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
+  elif 'v5p' in exp_name: return exp_name.replace('v5p', ''), 'v5p'
   elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
   else: return exp_name, 'v3'
 
@@ -271,7 +272,7 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
     global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH, tpu_type)
     global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR, tpu_type)
     global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR, tpu_type)
-  if tpu_type in ['v4', 'v5']:
+  if tpu_type in ['v4', 'v5', 'v5p']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:
       return adjust_config_by_tpu(experiment_class, tpu_type)

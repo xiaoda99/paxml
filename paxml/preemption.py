@@ -20,5 +20,5 @@ from jax.experimental import multihost_utils
 
 def reached_preemption_sync_point(step: int) -> bool:
   """Determine whether all hosts have reached a preemption sync point."""
-  return (jax.config.jax_coordination_service and
+  return (getattr(jax.config, 'jax_coordination_service', True) and
           multihost_utils.reached_preemption_sync_point(step))

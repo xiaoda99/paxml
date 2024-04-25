@@ -32,6 +32,10 @@ from praxis import optimizer_prefix_vectorization as opt_vec
 from praxis import optimizers
 from praxis import pax_fiddle
 from praxis import py_utils
+from functools import partial
+import operator
+from absl import logging
+
 
 JTensor = jnp.ndarray
 NestedMap = py_utils.NestedMap
@@ -42,9 +46,12 @@ SummaryType = base_layer.SummaryType
 instantiate = base_hyperparams.instantiate
 
 
-def _compute_grad_norm(grads: NestedMap) -> JTensor:
+def _compute_grad_norm(grads: NestedMap, mask: Optional[NestedMap]=None) -> JTensor:
   """Computes total grad norm."""
-  grad_norms_squared = jax.tree_map(lambda x: jnp.sum(x * x), grads)
+  if mask is None:
+    grad_norms_squared = jax.tree_map(lambda x: jnp.sum(x * x), grads)
+  else:
+    grad_norms_squared = jax.tree_map(lambda x, y: jnp.sum(x * x) * y, grads, mask)
   grad_norms_squared, _ = jax.tree_util.tree_flatten(grad_norms_squared)
   return jnp.sqrt(jnp.sum(jnp.stack(grad_norms_squared)))
 
@@ -140,6 +147,9 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
   repeat_prefix_sep: str = '#'
   keep_optimizer_state_for_excluded_vars: bool = False
   _get_grad_tx: Any = dataclasses.field(init=False, repr=False)
+  share_gradient: bool = False
+  share_average_gradient: bool = False
+  share_attn_ratio: Optional[float] = None
 
   def __post_init__(self):
     assert self.name, (
@@ -214,6 +224,69 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
       clip_gradient_single_norm_to_value = (
           self.optimizer.clip_gradient_single_norm_to_value
       )
+
+    #mqy share gradient 
+    if self.share_gradient:
+      logging.info('sharing gradient')
+      def set_kv(key_pattern, new_value, var_key, raw_value, ratio=None):
+        # return new_value if key_pattern in var_key else raw_value
+        if key_pattern in var_key:
+          if ratio is None:
+            out = new_value
+          else:
+            assert len(raw_value.shape) == 3, raw_value.shape     # shape: model_dim, num_heads, head_dim 
+            hidx = int(round(raw_value.shape[1] * ratio))
+            # raw_value[:,:hidx] = new_value
+            out = raw_value.at[:,:hidx].set(new_value)
+            # out = jnp.concatenate([new_value, raw_value[:, hidx:]], axis=1)
+        else:
+          out = raw_value
+        return out
+      def select(key_pattern, var_key, raw_value, ratio=None):
+        # return raw_value if key_pattern in var_key else 0
+        if key_pattern in var_key:
+          if ratio is None: # share qkov only 
+            out = raw_value 
+          else:
+            assert len(raw_value.shape) == 3, raw_value.shape     # shape: model_dim, num_heads, head_dim 
+            hidx = int(round(raw_value.shape[1] * ratio))
+            out = raw_value[:,:hidx]
+        else:
+          out = 0 
+        return out
+      var_keys = py_utils.extract_prefixed_keys_from_nested_map(raw_grads)
+      flat_var_keys = jax.tree_util.tree_flatten(var_keys)[0]
+      shared_dict = {}
+      for k in flat_var_keys:
+        if 'shared_' in k:
+          shared_k = 'shared_'+ k.split('shared_')[1]
+          if shared_k not in shared_dict:
+            shared_dict[shared_k] = [k]
+          else:
+            shared_dict[shared_k].append(k)
+      shared_keys = list(shared_dict.keys())
+      # shared_keys = list(set(['shared_'+k.split('shared_')[1] for k in flat_var_keys if 'shared_' in k ])) 
+      logging.info(f'shared_keys:{shared_keys}')   
+      selected_keys = []  
+      for k in shared_keys:
+        for var_key in flat_var_keys:
+          if k in var_key:
+            selected_keys.append(var_key)
+            break
+      def mask_fn(k): 
+        return 0 if k not in selected_keys and any([share_k in k for share_k in shared_keys]) else 1
+      mask = jax.tree_util.tree_map(mask_fn, var_keys)
+      if self.share_attn_ratio is not None: 
+        mask = None #TODO: refine mask
+      for k,v in shared_dict.items():
+        filtered = jax.tree_util.tree_map(partial(select, k, ratio=self.share_attn_ratio), var_keys, raw_grads)
+        sumed = jax.tree_util.tree_reduce(operator.add, filtered)
+        if self.share_average_gradient:
+          sumed = sumed / len(v)
+        raw_grads = jax.tree_util.tree_map(partial(set_kv, k, sumed, ratio=self.share_attn_ratio), var_keys, raw_grads)
+    else:
+      mask = None
+
     # Compute gradient norm.
 
     if self.grad_norm_individual_vars:
@@ -235,7 +308,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
         or clip_gradient_norm_to_value
         or clip_gradient_single_norm_to_value
     ):
-      raw_grad_norm = _compute_grad_norm(raw_grads)
+      raw_grad_norm = _compute_grad_norm(raw_grads, mask=mask)
       if self.grad_norm_summary:
         base_layer.add_global_summary(
             'learning/' + optimizer_name + 'raw_grad_norm',
@@ -302,7 +375,7 @@ class Learner(base_hyperparams.FiddleBaseParameterizable):
     )
 
     if self.grad_norm_summary:
-      clipped_grad_norm = _compute_grad_norm(grads)
+      clipped_grad_norm = _compute_grad_norm(grads, mask=mask)
       base_layer.add_global_summary(
           'learning/' + optimizer_name + 'clipped_grad_norm',
           clipped_grad_norm,
