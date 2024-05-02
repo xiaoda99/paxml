@@ -225,6 +225,7 @@ job_log_dir = None  # XD
 
 def get_tpu_type(exp_name):  # XD
   if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
+  elif 'v5p' in exp_name: return exp_name.replace('v5p', ''), 'v5p'
   elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
   else: return exp_name, 'v3'
 
@@ -239,6 +240,12 @@ def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
     experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
       if False and mdl > 1 else [replica, data // 2, mdl]
     experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 2
+  elif tpu_type == 'v5p':
+    replica, data, mdl = experiment_config.ICI_MESH_SHAPE
+    # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
+    experiment_config.ICI_MESH_SHAPE = [replica, data // 4, mdl]
+    experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 4
+  if tpu_type in ['v4', 'v5p']:
     if getattr(experiment_config, 'DATA_PATH', None) is not None:
       experiment_config.DATA_PATH = {split: append_zone(path, tpu_type)
         for split, path in experiment_config.DATA_PATH.items()}
@@ -271,7 +278,7 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
     global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH, tpu_type)
     global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR, tpu_type)
     global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR, tpu_type)
-  if tpu_type in ['v4', 'v5']:
+  if tpu_type in ['v4', 'v5', 'v5p']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:
       return adjust_config_by_tpu(experiment_class, tpu_type)

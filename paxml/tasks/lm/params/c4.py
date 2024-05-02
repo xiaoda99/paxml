@@ -344,7 +344,7 @@ class C4UnsupervisedDataset(base_experiment.BaseExperiment):
             batch_size=int(self.PERCORE_BATCH_SIZE * num_local_devices),
             seq_len=self.MAX_SEQ_LEN,
             reset_for_eval=getattr(self, 'RESET_FOR_EVAL', False),
-            repeat=1,
+            repeat=getattr(self, 'REPEAT', 1),
             eval_loop_num_batches=self.EVAL_LOOP_NUM_BATCHES,
             train_seed=self.TRAINING_SEED,
             task_features=list(self.KEY_MAP.values()),
@@ -731,7 +731,7 @@ def configure_gpt3_task(
     for name in ['input_activation_cls', 'use_input_bias', 'merge_dw_op', 'merge_dw_op2',
         'use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
         'dynamic_squeeze_gate_act_cls', 'gate_relative_scale', 'addictive_gate', 'use_static_w',
-        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', # 'squeeze_gate_activation_cls', 
+        'src_dependent', 'tgt_dependent', 'skip_bias', 'summary_verbosity', 'loop_over_dynamic_hd', 'keep_static_w_in_call', # 'squeeze_gate_activation_cls', 
       ] + dynamic_w_attrs:
       NAME = name.upper()
       if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -2570,6 +2570,19 @@ class PilePythia7B256x1DynWFFN16HD128Win256Aligned(PythiaInit7B, PilePythia7B256
   PYTHIA_ROTARY = True  # restart @10500/19990/29820/40210/50590/53190/63510/73910/82299/82400/92730/99970/106940/117320/127870/1375xx
                         # worker1 died due to kfang @~138300, then somehow recovered automatically (maybe after preemption several hours later)
   CHECKPOINT_MAX_TO_KEEP = 2
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedFinetune(PilePythia7B256x1DynWFFN16HD128Win256Aligned): #mqy: finetune dcpythia without static head composition, with learning rate of the last step 
+  # USE_STATIC_W = False
+  KEEP_STATIC_W_IN_CALL = 0 # ablate static w 
+  SAVE_ON_STEPS = list(range(144000,154000,1000)) # finetune 10k steps
+  REPEAT = 2 # adjust pile dataset to allow training 2 epochs 
+  # ICI_MESH_SHAPE = [1, 64, 1] # 64 for v5p; 256 for v4
+  # PERCORE_BATCH_SIZE = 16 #  4 for v4; 16 for v5p
+
+@experiment_registry.register
+class PilePythia7B256x1DynWFFN16HD128Win256AlignedContinual(PilePythia7B256x1DynWFFN16HD128Win256AlignedFinetune):
+  KEEP_STATIC_W_IN_CALL = 1
 
 @experiment_registry.register
 class PilePythia7B256x1DynWFFN16HD128Win256TransLogits(PilePythia7B256x1DynWFFN16HD128Win256):
