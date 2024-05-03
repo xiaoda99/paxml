@@ -3353,6 +3353,22 @@ class PileDCLlamaXLDWDDNoQKNorm(PileDCLlamaXLDWDD):
   QK_NORM = False  # v4 0.284
 
 @experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36(PileDCLlamaXLDWDDNoQKNorm): #mqy
+  HIDDEN_DIMS = 2752 # 5504 / 2. v4
+  NUM_LAYERS = 36
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36Dense1x1(PileDCLlamaXLDWDDNoQKNormA4M4L36): #mqy
+  DENSE_CONN = True
+  REMAT = True
+  USE_REPEATED_LAYER = False
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1(PileDCLlamaXLDWDDNoQKNormA4M4L36Dense1x1): #mqy
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+
+@experiment_registry.register
 class PileDCLlamaXLHead16x128SW(_SWConfig, PileDCLlamaXLHead16x128): pass
 
 @experiment_registry.register
@@ -3476,8 +3492,8 @@ class PileLlamaMediumDense1x1DynamicGeluFixBS(PileLlamaMediumDense1x1Dynamic): #
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
   QUERY_CHUNK_SIZE = None # 128
   LM_HEAD_CHUNK_SIZE = None # 512
-  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
-  PERCORE_BATCH_SIZE = 32 # for v5p
+  # ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  # PERCORE_BATCH_SIZE = 32 # for v5p
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluEmb1only(PileLlamaMediumDense1x1DynamicGeluFixBS): #mqy
@@ -3990,8 +4006,8 @@ class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormQkw0initFixBS(PileDCLlamaMediumDWDDNoQKNorm): # mqy
   DYNAMIC_W2_INIT = WeightInit.Constant(0) 
-  ICI_MESH_SHAPE = [1, 8, 1] # for v5p: 0.236
-  PERCORE_BATCH_SIZE = 32 # for v5p
+  # ICI_MESH_SHAPE = [1, 8, 1] # for v5p: 0.236
+  # PERCORE_BATCH_SIZE = 32 # for v5p
 
 @experiment_registry.register
 class PileDCLlamaMediumDDQKNorm(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
@@ -3999,8 +4015,8 @@ class PileDCLlamaMediumDDQKNorm(PileDCLlamaMediumDWDDNoQKNorm): #mqy
   PROBS_DYNAMIC_W_INIT = None
   DYNAMIC_W_INIT = None
   QK_NORM = True
-  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
-  PERCORE_BATCH_SIZE = 32 # for v5p
+  # ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  # PERCORE_BATCH_SIZE = 32 # for v5p
 
 @experiment_registry.register
 class PileDCLlamaMediumDDNoQKNormRerun(PileDCLlamaMediumDDQKNorm): #mqy 
@@ -4018,8 +4034,8 @@ class PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicFixBS(PileDCLlamaMediumDWDDNoQ
   DYNAMIC_DENSE = True # complie time: 47min/0.228（qchunk128,hchunk512）, 12min/0.154(qchunk1024,hchunkNone)
   QUERY_CHUNK_SIZE = 1024 # 128
   LM_HEAD_CHUNK_SIZE = None # 512
-  ICI_MESH_SHAPE = [1, 8, 1] # for v5p
-  PERCORE_BATCH_SIZE = 32 # for v5p
+  # ICI_MESH_SHAPE = [1, 8, 1] # for v5p
+  # PERCORE_BATCH_SIZE = 32 # for v5p
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicGeluFixBS(PileDCLlamaMediumDWDDNoQKNormDense1x1DynamicFixBS): #mqy
