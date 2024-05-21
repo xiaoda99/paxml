@@ -3375,6 +3375,14 @@ class PileDCLlamaMediumDWDDNoQKNormTgt(PileDCLlamaMediumDWDDNoQKNorm):
   SRC_DEPENDENT = False  # v4 0.457
 
 @experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDebug(PileDCLlamaMediumDWDDNoQKNorm):
+  pass # v4 0.3754
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtStaticW(PileDCLlamaMediumDWDDNoQKNormTgt):
+   USE_STATIC_W = True # v4 0.3938
+
+@experiment_registry.register
 class PileDCLlamaMediumNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNormSrc):
   USE_STATIC_W = True
 
