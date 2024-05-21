@@ -686,7 +686,7 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'comp_dense_diff', 'dense_bias_init_method']: # mqy
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -3359,14 +3359,24 @@ class PileDCLlamaXLDWDDNoQKNormA4M4L36(PileDCLlamaXLDWDDNoQKNorm): #mqy
 
 @experiment_registry.register
 class PileDCLlamaXLDWDDNoQKNormA4M4L36Dense1x1(PileDCLlamaXLDWDDNoQKNormA4M4L36): #mqy
-  DENSE_CONN = True
+  DENSE_CONN = True #v5p: compile 1.8h, 0.295 step/sec
+  WINDOW_SIZE = [256, None]* 18 
   REMAT = True
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
 class PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1(PileDCLlamaXLDWDDNoQKNormA4M4L36Dense1x1): #mqy
-  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE = True # v5p: compile 1.8h, 0.289 step/sec
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1Norm(PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1): #mqy
+  USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1NormBigchunk(PileDCLlamaXLDWDDNoQKNormA4M4L36DDense1x1Norm): #mqy
+  QUERY_CHUNK_SIZE = 1024 # v5p compile: 30min, 0.203 step/sec
+  LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class PileDCLlamaXLHead16x128SW(_SWConfig, PileDCLlamaXLHead16x128): pass
@@ -4102,6 +4112,14 @@ class PileDCLlamaMediumDWDDNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNorm):
 class PileDCLlamaMediumDWDDNoQKNormTgt(PileDCLlamaMediumDWDDNoQKNorm):
   SRC_DEPENDENT = False  # v4 0.457
 
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtDebug(PileDCLlamaMediumDWDDNoQKNormTgt):
+  pass
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSW(PileDCLlamaMediumDWDDNoQKNormTgt):
+  USE_STATIC_W = True # v4 0.3938
+
 # @experiment_registry.register
 # class PileDCLlamaMediumDWDDNoQKNormTgtSrcInterleave(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
 #   SRC_DEPENDENT = [False, True] * 12  # bug: layer_wise settings do not work
@@ -4353,6 +4371,10 @@ class PileDCLlamaMediumSWNoOKNorm(PileDCLlamaMediumSW):  # should be NoQKNorm
 
 @experiment_registry.register
 class PileDCLlamaMediumSWNoQKNorm(PileDCLlamaMediumSWNoOKNorm):  # fix classname and rerun
+  pass
+
+@experiment_registry.register
+class PileDCLlamaMediumSWNoQKNormDebug(PileDCLlamaMediumSWNoQKNorm):  # Debug
   pass
 
 @experiment_registry.register
