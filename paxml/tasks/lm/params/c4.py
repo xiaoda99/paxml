@@ -3374,6 +3374,25 @@ class PileDCLlamaMediumDWDDNoQKNormSrc(PileDCLlamaMediumDWDDNoQKNorm):
 class PileDCLlamaMediumDWDDNoQKNormTgt(PileDCLlamaMediumDWDDNoQKNorm):
   SRC_DEPENDENT = False  # v4 0.457
 
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtDebug2(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy
+#   pass  # v4 
+
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormTgtDebug5(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy at fcfd021d1643 commit of praxis repo
+#   pass
+#   # ZERO_LOSS = False # v4
+#   # LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormReproduced(PileDCLlamaMediumDWDDNoQKNorm): # mqy 
+  ZERO_LOSS = True
+  LM_HEAD_CHUNK_SIZE = 512
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormTgtSWFixRerun(PileDCLlamaMediumDWDDNoQKNormTgt): # mqy sw + qw
+  USE_STATIC_W = True # v4 0.3891
+
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormDebug(PileDCLlamaMediumDWDDNoQKNorm):
   pass # v4 0.3754
