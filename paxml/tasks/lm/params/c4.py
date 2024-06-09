@@ -686,7 +686,8 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method']: # mqy
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
+                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -728,7 +729,7 @@ def configure_gpt3_task(
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
-                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v'
+                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v', 'save_v_out'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3476,6 +3477,21 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm(PileLlamaMedium): #mqy
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_DENSE_TYPE = 'qk'
+  DYNAMIC_HEAD_RANK = 4
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkv'
 
 @experiment_registry.register
 class PileLlamaMediumHead8(PileLlamaMedium): #mqy
