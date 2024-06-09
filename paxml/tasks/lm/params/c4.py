@@ -3170,6 +3170,11 @@ class PileDCLlamaXLDWDDNoQKNorm(PileDCLlamaXLDWDD):
   QK_NORM = False  # v4 0.284
 
 @experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormTgtSW(PileDCLlamaXLDWDDNoQKNorm):
+  USE_STATIC_W = True  # v4 0.3069
+  SRC_DEPENDENT = False
+
+@experiment_registry.register
 class PileDCLlamaXLHead16x128SW(_SWConfig, PileDCLlamaXLHead16x128): pass
 
 @experiment_registry.register
