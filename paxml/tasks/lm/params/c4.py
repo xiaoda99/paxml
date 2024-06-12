@@ -687,7 +687,7 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
-                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'ablate_dynamic_dense_qkv']: # mqy
+                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'ablate_dynamic_dense_qkv', 'dynamic_swap_residual']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -3524,6 +3524,11 @@ class PileLlamaMediumDense1x1DynamicAblateV(PileLlamaMediumDense1x1Dynamic): #mq
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicAblateQKV(PileLlamaMediumDense1x1Dynamic): #mqy
   ABLATE_DYNAMIC_DENSE_QKV = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicQKonly(PileLlamaMediumDense1x1Dynamic): #mqy
+  DYNAMIC_SWAP_RESIDUAL = True
+  ABLATE_DYNAMIC_DENSE_QKV = 'qk' # reverse ablation due to swapped residual 
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluFixBS(PileLlamaMediumDense1x1Dynamic): #mqy
