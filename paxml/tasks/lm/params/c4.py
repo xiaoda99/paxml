@@ -687,7 +687,7 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
-                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type']: # mqy
+                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -729,7 +729,7 @@ def configure_gpt3_task(
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
-                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v', 'save_v_out'
+                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v', 'save_v_out','dynamic_qk_proj'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3492,6 +3492,14 @@ class PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm(PileLlamaMedium): #mqy
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
   DYNAMIC_HEAD_DENSE_TYPE = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVProjQK(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
+  DYNAMIC_QK_PROJ = True
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVSepProj(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
+  DYNAMIC_HEAD_SEPERATE_PARAM = True
 
 @experiment_registry.register
 class PileLlamaMediumHead8(PileLlamaMedium): #mqy
