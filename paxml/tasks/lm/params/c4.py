@@ -694,6 +694,7 @@ def configure_gpt3_task(
       if hasattr(cls, NAME):
         setattr(stacked_p, name, getattr(cls, NAME))
 
+    transformer_layer_p.dynamic_token_shift = getattr(cls, 'DYNAMIC_TOKEN_SHIFT', 0)
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
@@ -3479,6 +3480,11 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumDynamicTokenShiftGsInit(PileLlamaMedium): #mqy
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  DYNAMIC_TOKEN_SHIFT = 2
+
+@experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm(PileLlamaMedium): #mqy
   REMAT = True
   USE_REPEATED_LAYER = False
@@ -3492,6 +3498,14 @@ class PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm(PileLlamaMedium): #mqy
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
   DYNAMIC_HEAD_DENSE_TYPE = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVR8(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
+  DYNAMIC_HEAD_RANK = 8
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
 
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVProjQK(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
