@@ -687,7 +687,7 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
-                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param']: # mqy
+                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -695,6 +695,10 @@ def configure_gpt3_task(
         setattr(stacked_p, name, getattr(cls, NAME))
 
     transformer_layer_p.dynamic_token_shift = getattr(cls, 'DYNAMIC_TOKEN_SHIFT', 0)
+    if getattr(cls, 'DENSE_NORMALIZATION_CLS', None) is not None:
+      transformer_layer_p.dense_norm_tpl = pax_fiddle.Config(cls.DENSE_NORMALIZATION_CLS) #mqy
+      if getattr(cls, 'DENSE_NORMALIZATION_CLS', None) == normalizations.RmsNorm:
+        transformer_layer_p.dense_norm_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
@@ -3500,12 +3504,32 @@ class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV(PileLlamaMediumHeadDynDen
   DYNAMIC_HEAD_DENSE_TYPE = 'qkv'
 
 @experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResV(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
+  DYNAMIC_HEAD_DENSE_TYPE = 'v'
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResMixedV(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
+  DYNAMIC_HEAD_DENSE_TYPE = 'o'
+
+@experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVR8(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
   DYNAMIC_HEAD_RANK = 8
 
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO(PileLlamaMediumHeadDynDenseDw2Init0Dw1Norm):
   DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVOR2(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO):
+  DYNAMIC_HEAD_RANK = 2 
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVOScaleNorm(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO):
+  DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
+
+@experiment_registry.register
+class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVONormOnDw1(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO):
+  HEAD_DW1_NORM_ON_ACTIVATION = False
 
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVProjQK(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
@@ -3617,6 +3641,12 @@ class PileLlamaMediumHead64Head16Interleave(PileLlamaMedium): #mqy
   NUM_LAYERS_PER_BLOCK = 2
   NUM_HEADS = [64,16] 
   DIMS_PER_HEAD = [16,64]
+
+@experiment_registry.register
+class PileLlamaMediumHead256Head16Interleave(PileLlamaMedium): #mqy
+  NUM_LAYERS_PER_BLOCK = 2
+  NUM_HEADS = [256,16] 
+  DIMS_PER_HEAD = [4,64]
 
 @experiment_registry.register
 class PileLlamaXLRematDebug(PileLlamaXL): #mqy
@@ -4050,6 +4080,18 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDynHeadDense(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_RANK = 4
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+  WINDOW_SIZE = [256, None] * 12
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormQkw0initFixBS(PileDCLlamaMediumDWDDNoQKNorm): # mqy
