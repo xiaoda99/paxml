@@ -734,7 +734,8 @@ def configure_gpt3_task(
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
-                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 'scale_v', 'save_v_out','dynamic_qk_proj'
+                'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 
+                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3236,6 +3237,17 @@ class PileLlamaXLDense1x1(PileLlamaXL):
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaXLDynamicHeadDense(PileLlamaXL):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+  DYNAMIC_HEAD_RANK = 4
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+
+@experiment_registry.register
 class PileLlamaXLHead16x128(PileLlamaXL):
   NUM_HEADS = 16
   DIMS_PER_HEAD = 128  # v3 0.401
@@ -3364,6 +3376,18 @@ class PileDCLlamaXLDWDDNoQKNormA4M4L36(PileDCLlamaXLDWDDNoQKNorm): #mqy
   NUM_LAYERS = 36
 
 @experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormA4M4L36DynamicHeadDense(PileDCLlamaXLDWDDNoQKNormA4M4L36): #mqy
+  WINDOW_SIZE = [256, None]* 18 
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+  DYNAMIC_HEAD_RANK = 4
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+
+@experiment_registry.register
 class PileDCLlamaXLDWDDNoQKNormA4M4L36Dense1x1(PileDCLlamaXLDWDDNoQKNormA4M4L36): #mqy
   DENSE_CONN = True #v5p: compile 1.8h, 0.295 step/sec
   WINDOW_SIZE = [256, None]* 18 
@@ -3482,6 +3506,11 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+@experiment_registry.register
+class PileLlamaMediumMQA(PileLlamaMedium):
+  NUM_KV_HEADS = 1  # v3 0.202
+  HIDDEN_DIMS = 3370 # (2*(num_heads -1)* d_model * d_head + 8 * d_model * d_model) / 3 / d_model
 
 @experiment_registry.register
 class PileLlamaMediumDynamicTokenShiftGsInit(PileLlamaMedium): #mqy
@@ -4080,6 +4109,63 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVO(PileDCLlamaMediumDWDDNoQKNorm):
+  COMPOSE_MODE = 'qkvo' # v4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOFix(PileDCLlamaMediumDWDDNoQKNorm): # rm pre and post proj 
+  COMPOSE_MODE = 'qkvo' # v4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeVO(PileDCLlamaMediumDWDDNoQKNorm):
+  COMPOSE_MODE = 'vo' # v4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInit(PileDCLlamaMediumDWDDNoQKNormComposeQKVO):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0007) # 0.00014 * 5
+  QUERY_CHUNK_SIZE = 1024
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGrad(PileDCLlamaMediumDWDDNoQKNormComposeQKVO):
+  DYNAMIC_W_INIT = WeightInit.Gaussian(0.0007) # 0.00014 * 5
+  QUERY_CHUNK_SIZE = 128
+  COMPOSE_RESIDUAL = False
+  GRAD_NORM_INDIVIDUAL_VARS = True
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.learner.grad_norm_individual_vars = getattr(self, 'GRAD_NORM_INDIVIDUAL_VARS', False)
+    return task_p
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGradInnerNorm(PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGrad):
+  COMPOSE_INNER_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGradInnerNormONorm(PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGrad):
+  COMPOSE_INNER_NORM = True
+  O_GROUPNORM = False
+  O_NORM = True
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResONormQKNormIndGrad(PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResIndGrad):
+  O_GROUPNORM = False
+  O_NORM = True
+  QK_NORM = True
+  GRAD_NORM_INDIVIDUAL_VARS = True
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.learner.grad_norm_individual_vars = getattr(self, 'GRAD_NORM_INDIVIDUAL_VARS', False)
+    return task_p
+  
+# @experiment_registry.register
+# class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoResOGNormQKNorm(PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInitNoRes):
+#   O_GROUPNORM = True
+#   O_NORM = True
+#   QK_NORM = True
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormDynHeadDense(PileDCLlamaMediumDWDDNoQKNorm): # mqy
