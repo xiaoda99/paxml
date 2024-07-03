@@ -3509,8 +3509,8 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
 
 @experiment_registry.register
 class PileLlamaMediumMQA(PileLlamaMedium):
-  NUM_KV_HEADS = 1  # v3 0.202
-  HIDDEN_DIMS = 3370 # (2*(num_heads -1)* d_model * d_head + 8 * d_model * d_model) / 3 / d_model
+  NUM_KV_HEADS = 1  # v4: 0.6044
+  HIDDEN_DIMS = 3456 # 3370 round 128 -> 3456 ; (2*(num_heads -1)* d_model * d_head + 8 * d_model * d_model) / 3 / d_model
 
 @experiment_registry.register
 class PileLlamaMediumDynamicTokenShiftGsInit(PileLlamaMedium): #mqy
@@ -4109,6 +4109,19 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQA(PileDCLlamaMediumDWDDNoQKNorm):
+  NUM_KV_HEADS = 1  # v4: 0.3928
+  HIDDEN_DIMS = 3456
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQAComposeQO(PileDCLlamaMediumDWDDNoQKNormMQA):
+  COMPOSE_MODE = 'qo' # v4: 0.3736
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQATgt(PileDCLlamaMediumDWDDNoQKNormMQA):
+  SRC_DEPENDENT = False
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormComposeQKVO(PileDCLlamaMediumDWDDNoQKNorm):
