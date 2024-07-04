@@ -686,7 +686,8 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_attn', 'dynamic_dense_attn_linear', 'dynamic_dense_attn_scale', 'dynamic_dense_attn_q_init',
+                 'dynamic_dense_act_cls', 'use_dense_norm', 'layer_output_norm', 'comp_dense_diff', 'dense_bias_init_method', 
                  'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3587,6 +3588,36 @@ class PileLlamaMediumDense1x1DynamicDebug(PileLlamaMediumDense1x1): #mqy
 @experiment_registry.register
 class PileLlamaMediumDense1x1Dynamic(PileLlamaMediumDense1x1): #mqy
   DYNAMIC_DENSE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicNorm(PileLlamaMediumDense1x1Dynamic): #mqy
+  # LAYER_OUTPUT_NORM = True
+  USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicAttn(PileLlamaMediumDense1x1Dynamic): #mqy
+  DYNAMIC_DENSE_ATTN = True
+  DYNAMIC_DENSE_ATTN_LINEAR = False
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicAttnNorm(PileLlamaMediumDense1x1DynamicAttn): #mqy
+  # LAYER_OUTPUT_NORM = True
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ATTN_SCALE = None
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicLinearNormQ0(PileLlamaMediumDense1x1Dynamic): #mqy
+  DYNAMIC_DENSE_ATTN = True
+  DYNAMIC_DENSE_ATTN_LINEAR = True
+  # LAYER_OUTPUT_NORM = True
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ATTN_Q_INIT = WeightInit.Constant(0)
+  
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicAttnScale0p1(PileLlamaMediumDense1x1DynamicAttn): #mqy
+  DYNAMIC_DENSE_ATTN = True
+  DYNAMIC_DENSE_ATTN_LINEAR = False
+  DYNAMIC_DENSE_ATTN_SCALE = 0.1 
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluFixBS(PileLlamaMediumDense1x1Dynamic): #mqy
