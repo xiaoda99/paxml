@@ -735,7 +735,7 @@ def configure_gpt3_task(
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
                 'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 
-                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm'
+                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm', 'dynamic_position', 'dynamic_position_activation_cls'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3506,6 +3506,14 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+@experiment_registry.register
+class PileLlamaMediuDynPos(PileLlamaMedium):
+  DYNAMIC_POSITION = True
+
+@experiment_registry.register
+class PileLlamaMediuDynPosNoact(PileLlamaMediuDynPos):
+  DYNAMIC_POSITION_ACTIVATION_CLS = None
 
 @experiment_registry.register
 class PileLlamaMediumMQA(PileLlamaMedium):
