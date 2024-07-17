@@ -735,7 +735,9 @@ def configure_gpt3_task(
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
                 'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 
-                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm', 'dynamic_position', 'dynamic_position_activation_cls'
+                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm',
+                'dynamic_position', 'dynamic_position_activation_cls', 'dynamic_position_bias', 'dynamic_position_scale',
+                'rotary_position_emb_base', 'dynamic_position_act_bias', 'dynamic_position_bias_learnable', 'dynamic_position_mlp'
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3512,8 +3514,48 @@ class PileLlamaMediuDynPos(PileLlamaMedium):
   DYNAMIC_POSITION = True
 
 @experiment_registry.register
+class PileLlamaMediumDynPosBase1mGelulnBiasMlp(PileLlamaMedium):
+  DYNAMIC_POSITION = True
+  ROTARY_POSITION_EMB_BASE = 1000_000
+  DYNAMIC_POSITION_ACTIVATION_CLS = layers.GELU 
+  DYNAMIC_POSITION_MLP = True
+  DYNAMIC_POSITION_BIAS_LEARNABLE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynPosBase1mGeluBias1Fix(PileLlamaMedium):
+  DYNAMIC_POSITION = True
+  ROTARY_POSITION_EMB_BASE = 1000_000
+  DYNAMIC_POSITION_ACTIVATION_CLS = layers.GELU 
+  DYNAMIC_POSITION_BIAS = 1
+
+@experiment_registry.register
+class PileLlamaMediumDynPosBase1mSigmoidBias1Scale100ActBias10(PileLlamaMedium):
+  DYNAMIC_POSITION = True
+  ROTARY_POSITION_EMB_BASE = 1000_000
+  DYNAMIC_POSITION_BIAS = 1
+  DYNAMIC_POSITION_ACT_BIAS = 10 # torch.sigmoid(torch.tensor([-10])) * 100 = 0.0045
+  DYNAMIC_POSITION_SCALE = 100
+
+@experiment_registry.register
+class PileLlamaMediumDynPosBase1mTanhBias1Scale100(PileLlamaMedium):
+  DYNAMIC_POSITION = True
+  ROTARY_POSITION_EMB_BASE = 1000_000
+  DYNAMIC_POSITION_ACTIVATION_CLS = layers.Tanh 
+  DYNAMIC_POSITION_BIAS = 1
+  DYNAMIC_POSITION_SCALE = 100
+
+@experiment_registry.register
+class PileLlamaMediumDynPosBase1mSigmoidBias1Scale100ActBias7(PileLlamaMediumDynPosBase1mSigmoidBias1Scale100ActBias10):
+  DYNAMIC_POSITION_ACT_BIAS = 7 # torch.sigmoid(torch.tensor([-7])) * 100 = 0.091
+
+@experiment_registry.register
 class PileLlamaMediuDynPosNoact(PileLlamaMediuDynPos):
   DYNAMIC_POSITION_ACTIVATION_CLS = None
+
+@experiment_registry.register
+class PileLlamaMediuDynPosBias1Scale100(PileLlamaMediuDynPos):
+  DYNAMIC_POSITION_BIAS = 1
+  DYNAMIC_POSITION_SCALE = 100
 
 @experiment_registry.register
 class PileLlamaMediumMQA(PileLlamaMedium):
