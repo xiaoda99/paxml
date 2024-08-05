@@ -686,9 +686,9 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_attn', 'dynamic_dense_attn_linear', 'dynamic_dense_attn_scale', 'dynamic_dense_attn_q_init',
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_attn', 'dynamic_dense_attn_linear', 'dynamic_dense_attn_scale', 'dynamic_dense_attn_q_init', 'dynamic_dense_attn_uniform',
                  'dynamic_dense_act_cls', 'use_dense_norm', 'layer_output_norm', 'comp_dense_diff', 'dense_bias_init_method', 
-                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
+                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'dynamic_dense_attn_layer_pos']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -3613,6 +3613,18 @@ class PileLlamaMediumDense1x1DynamicLinearNormQ0(PileLlamaMediumDense1x1Dynamic)
   USE_DENSE_NORM = True
   DYNAMIC_DENSE_ATTN_Q_INIT = WeightInit.Constant(0)
   
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicAttnUniformQ0Scale1Norm(PileLlamaMediumDense1x1DynamicAttn): #mqy
+  DYNAMIC_DENSE_ATTN = True
+  DYNAMIC_DENSE_ATTN_LINEAR = False
+  DYNAMIC_DENSE_ATTN_SCALE = 1 
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ATTN_UNIFORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicAttnUniformQ0Scale1NormLayerPos(PileLlamaMediumDense1x1DynamicAttnUniformQ0Scale1Norm):
+  DYNAMIC_DENSE_ATTN_LAYER_POS = True
+
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicAttnScale0p1(PileLlamaMediumDense1x1DynamicAttn): #mqy
   DYNAMIC_DENSE_ATTN = True
