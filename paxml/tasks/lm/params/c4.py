@@ -686,7 +686,8 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
+                 'dense_conn', 'dynamic_dense', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop',
+                'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 
                  'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3637,6 +3638,36 @@ class PileLlamaMediumDense1x1DynamicDebug(PileLlamaMediumDense1x1): #mqy
 @experiment_registry.register
 class PileLlamaMediumDense1x1Dynamic(PileLlamaMediumDense1x1): #mqy
   DYNAMIC_DENSE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluOV(PileLlamaMediumDense1x1Dynamic): #mqy
+  DYNAMIC_DENSE_OV = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluOuterOV(PileLlamaMediumDense1x1DynamicGeluOV): #mqy
+  DYNAMIC_DENSE_OV_OUTER_LOOP = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluOuterOVZeroInit(PileLlamaMediumDense1x1DynamicGeluOuterOV): #mqy
+  DYNAMIC_DENSE_OV_INIT = 'gauss+const0'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluOuterOVZeroInitDenseNorm(PileLlamaMediumDense1x1DynamicGeluOuterOVZeroInit): #mqy dynamic dense + ov
+  USE_DENSE_NORM = True 
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluOuterOVGaussInitDenseNorm(PileLlamaMediumDense1x1DynamicGeluOuterOVZeroInitDenseNorm):
+  DYNAMIC_DENSE_OV_INIT = 'gauss+gauss'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic): #mqy dynamic dense baseline
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormG8(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  DYNAMIC_DENSE_NUM_GROUPS = 8
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluFixBS(PileLlamaMediumDense1x1Dynamic): #mqy
