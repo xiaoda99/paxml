@@ -687,15 +687,30 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'dense_conn', 'dynamic_dense', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
-                'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge',
-                'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual'
-                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
+                'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'use_recurrent_layer_mixing', 
+                'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
+                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
       if hasattr(cls, NAME):
         setattr(stacked_p, name, getattr(cls, NAME))
 
+    # update layer mixing hyper-params
+    for name in ['mixing_mode', 'use_layermix_norm', 'mixing_res']:
+      NAME = name.upper() 
+      if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
+        NAME = NAME + '_EARLY'
+      if hasattr(cls, NAME):
+        setattr(stacked_p.recurrent_layer_mixing_tpl, name, getattr(cls, NAME))
+
+    for name in ['gating_mlp_input']:
+      NAME = name.upper() 
+      if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
+        NAME = NAME + '_EARLY'
+      if hasattr(cls, NAME):
+        setattr(transformer_layer_p, name, getattr(cls, NAME))
+      
     transformer_layer_p.dynamic_token_shift = getattr(cls, 'DYNAMIC_TOKEN_SHIFT', 0)
     if getattr(cls, 'DENSE_NORMALIZATION_CLS', None) is not None:
       transformer_layer_p.dense_norm_tpl = pax_fiddle.Config(cls.DENSE_NORMALIZATION_CLS) #mqy
@@ -3512,6 +3527,49 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumGatingMlpInputSigmoidAttnDepd(PileLlamaMedium): #mqy
+  GATING_MLP_INPUT = 'sigmoid+attn_out_depend'
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixRNNRepeat0(PileLlamaMedium):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  USE_RECURRENT_LAYER_MIXING = True
+  MIXING_MODE = 'rnn'
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixRNNNormFix(PileLlamaMedium):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  USE_RECURRENT_LAYER_MIXING = True
+  MIXING_MODE = 'rnn'
+  USE_LAYERMIX_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixRNNNormNoResFix(PileLlamaMediumLayerMixRNNNormFix):
+  MIXING_RES = 0 
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixLinearRNNNormFix(PileLlamaMediumLayerMixRNNNormFix):
+  MIXING_MODE = 'linear_rnn'
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixGatedLinearRNNNormFix(PileLlamaMediumLayerMixRNNNormFix):
+  MIXING_MODE = 'gated_linear_rnn'
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixGRUNormFix(PileLlamaMedium):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  USE_RECURRENT_LAYER_MIXING = True
+  MIXING_MODE = 'gru'
+  USE_LAYERMIX_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumLayerMixLstmNorm(PileLlamaMediumLayerMixGRUNormFix):
+  MIXING_MODE = 'lstm'
+
+@experiment_registry.register
 class PileLlamaMediuDynPos(PileLlamaMedium):
   DYNAMIC_POSITION = True
 
@@ -3686,6 +3744,23 @@ class PileLlamaMediumDense1x1DynamicGeluOuterOVGaussInitDenseNorm(PileLlamaMediu
 class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic): #mqy dynamic dense baseline
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
   USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormSoftmax(PileLlamaMediumDense1x1DynamicGeluDenseNorm): #mqy softmax along layer dim
+  DYNAMIC_DENSE_NORMALIZED = True
+  DENSE_BIAS_INIT_METHOD = 'current_only_softmax'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputLinear(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'linear'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputSigmoid(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'sigmoid'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputSigmoidAttnDepd(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'sigmoid+attn_out_depend'
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormLauReLResRank32(PileLlamaMediumDense1x1DynamicGeluDenseNorm): # mqy dynamic dense + laurel 
