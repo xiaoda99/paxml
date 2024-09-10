@@ -686,8 +686,9 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dynamic_dense', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
-                'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'use_recurrent_layer_mixing', 
+                 'dense_conn', 'dense_conn_learnable', 'dynamic_dense', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
+                'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
       NAME = name.upper() 
@@ -746,7 +747,7 @@ def configure_gpt3_task(
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
                 'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
                 'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
-                'dim_per_head_v', 'value_gate_activation_cls', 'o_gate_activation_cls', 'o_gate_rank',
+                'dim_per_head_v', 'value_gate_activation_cls', 'q_gate_activation_cls', 'o_gate_activation_cls', 'o_gate_rank',
                 'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
@@ -3527,8 +3528,24 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumQgateFullRank(PileLlamaMedium):
+  Q_GATE_ACTIVATION_CLS = layers.Sigmoid
+
+@experiment_registry.register
+class PileLlamaMediumOgateFullRank(PileLlamaMedium):
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid
+
+@experiment_registry.register
 class PileLlamaMediumGatingMlpInputSigmoidAttnDepd(PileLlamaMedium): #mqy
   GATING_MLP_INPUT = 'sigmoid+attn_out_depend'
+
+@experiment_registry.register
+class PileLlamaMediumGatingMlpInputLinearAttnDepdSkipGres(PileLlamaMedium): #mqy
+  GATING_MLP_INPUT = 'linear+attn_out_depend+skip_gating_residual'
+  
+@experiment_registry.register
+class PileLlamaMediumGatingMlpInputMLPAttnDepdSkipGres(PileLlamaMedium): #mqy
+  GATING_MLP_INPUT = 'mlp+attn_out_depend+skip_gating_residual'
 
 @experiment_registry.register
 class PileLlamaMediumLayerMixRNNRepeat0(PileLlamaMedium):
@@ -3690,6 +3707,20 @@ class PileLlamaMediumDense1x1(PileLlamaMedium): #mqy
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaMediumDense1x1SaveEvery1000(PileLlamaMediumDense1x1):
+  CHECKPOINT_EVERY_N_STEPS = 1000 # workaroud to reduce time of saving checkpoints
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1SaveEvery1000NoVarsInter100(PileLlamaMediumDense1x1SaveEvery1000):
+  SUMMARY_INTERVAL_STEPS = 100
+  VARIABLE_NORM_SUMMARY = False workaroud to reduce tensorboard summary
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
 class PileLlamaMediumLaurelRWLR(PileLlamaMedium): #mqy
   REMAT = True
   USE_REPEATED_LAYER = False
@@ -3746,6 +3777,55 @@ class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic
   USE_DENSE_NORM = True
 
 @experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormSaveEvery1000(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  CHECKPOINT_EVERY_N_STEPS = 1000
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormDebug1(PileLlamaMediumDense1x1Dynamic):
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormDisentangled(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  DYNAMIC_DENSE_DISENTANGLE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormNostatic(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  DENSE_CONN_LEARNABLE = False 
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormHid4(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  DYNAMIC_DENSE_HIDDEN_EXPAND = 4
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormQwKw(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  DYNAMIC_DENSE_QUERY_WISE = True
+  DYNAMIC_DENSE_KEY_WISE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormKw(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  DYNAMIC_DENSE_QUERY_WISE = False
+  DYNAMIC_DENSE_KEY_WISE = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicDenseNormSingleLayer(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  DYNAMIC_DENSE_MULTILAYER = False
+  DYNAMIC_DENSE_ACT_CLS = None
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGated(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  DYNAMIC_DENSE_GATE_MLP = True
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicSiluDenseNormGLU(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  DYNAMIC_DENSE_GLU_MLP = True
+  DYNAMIC_DENSE_ACT_CLS = layers.SiLU 
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormRMSnormOnWeight(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  DYNAMIC_DENSE_NORM_ON_WEIGHT = True
+
+@experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormSoftmax(PileLlamaMediumDense1x1DynamicGeluDenseNorm): #mqy softmax along layer dim
   DYNAMIC_DENSE_NORMALIZED = True
   DENSE_BIAS_INIT_METHOD = 'current_only_softmax'
@@ -3761,6 +3841,18 @@ class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputSigmoid(PileLlama
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputSigmoidAttnDepd(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
   GATING_MLP_INPUT = 'sigmoid+attn_out_depend'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputLinearAttnDepdSkipGres(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'linear+attn_out_depend+skip_gating_residual'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputLinearAttnDepdSkipGresLBias(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'linear+attn_out_depend+skip_gating_residual+learnable_bias'
+
+@experiment_registry.register
+class PileLlamaMediumDense1x1DynamicGeluDenseNormGatingMlpInputMLPAttnDepdSkipGres(PileLlamaMediumDense1x1DynamicGeluDenseNorm): 
+  GATING_MLP_INPUT = 'mlp+attn_out_depend+skip_gating_residual'
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormLauReLResRank32(PileLlamaMediumDense1x1DynamicGeluDenseNorm): # mqy dynamic dense + laurel 
@@ -4306,8 +4398,12 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
   USE_STATIC_W = False  # v4 0.366
 
 @experiment_registry.register
-class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD):
+class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD): # dcformer base line 
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormGatingMlpInput(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
+  GATING_MLP_INPUT = 'linear+attn_out_depend' # v4 0.362
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormMQA(PileDCLlamaMediumDWDDNoQKNorm):
