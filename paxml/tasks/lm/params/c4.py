@@ -747,7 +747,7 @@ def configure_gpt3_task(
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
                 'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
                 'probs_squeeze_ratio', 'probs_squeeze_activation_cls', 'probs_output_activation_cls', 'left_mul',
-                'dim_per_head_v', 'value_gate_activation_cls', 'q_gate_activation_cls', 'o_gate_activation_cls', 'o_gate_rank',
+                'dim_per_head_v', 'value_gate_activation_cls', 'q_gate_activation_cls', 'o_gate_activation_cls', 'o_gate_rank', 'o_gate2_init_method',
                 'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
@@ -3257,6 +3257,23 @@ class PileLlamaXLDense1x1(PileLlamaXL):
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaXLDynamicDense(PileLlamaXL): # mqy
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DENSE_CONN = True
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  SUMMARY_INTERVAL_STEPS = 50
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
 class PileLlamaXLDynamicHeadDense(PileLlamaXL):
   REMAT = True
   USE_REPEATED_LAYER = False
@@ -3528,12 +3545,39 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumOgateSigmoidXD(PileLlamaMedium): # mqy
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid 
+
+@experiment_registry.register
+class PileLlamaMediumOgateTanhXD(PileLlamaMedium): # mqy
+  O_GATE_ACTIVATION_CLS = layers.Tanh 
+
+@experiment_registry.register
+class PileLlamaMediumOgateSiLuXD(PileLlamaMedium): # mqy
+  O_GATE_ACTIVATION_CLS = layers.SiLU 
+
+@experiment_registry.register
+class PileLlamaMediumOgateIdtXD(PileLlamaMedium): # mqy
+  O_GATE_ACTIVATION_CLS = layers.Identity
+
+@experiment_registry.register
 class PileLlamaMediumQgateFullRank(PileLlamaMedium):
   Q_GATE_ACTIVATION_CLS = layers.Sigmoid
 
 @experiment_registry.register
 class PileLlamaMediumOgateFullRank(PileLlamaMedium):
   O_GATE_ACTIVATION_CLS = layers.Sigmoid
+
+@experiment_registry.register
+class PileLlamaMediumOgateHalfRankIdtG2Zero(PileLlamaMedium):
+  O_GATE_ACTIVATION_CLS = layers.Identity
+  O_GATE_RANK = 512 
+  O_GATE2_INIT_METHOD = 'zero'
+
+@experiment_registry.register
+class PileLlamaMediumOgateGatingMlpInput(PileLlamaMedium): # mqy
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid
+  GATING_MLP_INPUT = 'sigmoid+attn_out_depend'
 
 @experiment_registry.register
 class PileLlamaMediumGatingMlpInputSigmoidAttnDepd(PileLlamaMedium): #mqy
@@ -3713,7 +3757,7 @@ class PileLlamaMediumDense1x1SaveEvery1000(PileLlamaMediumDense1x1):
 @experiment_registry.register
 class PileLlamaMediumDense1x1SaveEvery1000NoVarsInter100(PileLlamaMediumDense1x1SaveEvery1000):
   SUMMARY_INTERVAL_STEPS = 100
-  VARIABLE_NORM_SUMMARY = False workaroud to reduce tensorboard summary
+  VARIABLE_NORM_SUMMARY = False # workaroud to reduce tensorboard summary
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     """Returns the task parameters."""
     task_p = super().task()
@@ -3779,6 +3823,21 @@ class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormSaveEvery1000(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
   CHECKPOINT_EVERY_N_STEPS = 1000
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDense(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  SUMMARY_INTERVAL_STEPS = 20
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseOgateSigmoid(PileLlamaMediumDynamicDense):
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormDebug1(PileLlamaMediumDense1x1Dynamic):
@@ -4360,6 +4419,10 @@ class PileDCLlamaMediumRellocA4M4D1280(PileDCLlamaMedium):
 class PileDCLlamaMediumGO(PileDCLlamaMedium):
   O_GATE_ACTIVATION_CLS = layers.SiLU  # v3 0.230
   HIDDEN_DIMS = 2390  # MODEL_DIMS * 7 / 3
+
+@experiment_registry.register
+class PileDCLlamaMediumGOSigmoidXD(PileDCLlamaMediumGO): #mqy
+  O_GATE_ACTIVATION_CLS = layers.Sigmoid  #
 
 @experiment_registry.register
 class PileDCLlamaMediumGVO(PileDCLlamaMedium):
