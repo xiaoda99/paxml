@@ -690,7 +690,8 @@ def configure_gpt3_task(
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
-                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation']: # mqy
+                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation',
+                'mamba_lidxs', 'use_mamba']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -769,7 +770,7 @@ def configure_gpt3_task(
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
         'use_dw_hidden_bias', 'merge_dynamic_w_hidden', 'dw_hidden_gate_act_cls',
         'dw1_norm_cls', 'dw1_norm_dbias_init', 'dw1_norm_bias_init', 'dw1_norm_bias_const', 'square_dw1_norm_bias',
-        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity',
+        'dw_gate_activation_cls', 'dw_gate_weights', 'dd_gate_activation_cls', 'dd_activation_cls', 'summary_verbosity', 'dw_param_gate',
     ]
     for name in ['input_activation_cls', 'use_input_bias', 'merge_dw_op', 'merge_dw_op2',
         'use_squeeze_bias', 'transpose', 'learnable_diag', 'relative_scale', 'skip_ffn_weight_decay',
@@ -3251,6 +3252,14 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
 
 @experiment_registry.register
+class PileLlamaXLSlim(PileLlamaXL):
+  NUM_LAYERS = 48 
+  MODEL_DIMS = 1408 
+  HIDDEN_DIMS = 4080 
+  NUM_HEADS = 22
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
 class PileLlamaXLDense1x1(PileLlamaXL):
   DENSE_CONN = True
   REMAT = True
@@ -3543,6 +3552,21 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+@experiment_registry.register
+class PileMambaMediumDebug4(PileLlamaMedium):
+  REMAT = True # v4: 0.24
+  USE_REPEATED_LAYER = False
+  USE_MAMBA = True
+  MAMBA_LIDXS = list(range(48)) 
+  NUM_LAYERS = 48
+  CHECKPOINT_EVERY_N_STEPS = 500
+  VARIABLE_NORM_SUMMARY = False # workaroud to reduce tensorboard summary
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
 
 @experiment_registry.register
 class PileLlamaMediumOgateSigmoidXD(PileLlamaMedium): # mqy
@@ -4463,6 +4487,12 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD): # dcformer base line 
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormDynGate(PileDCLlamaMediumDWDDNoQKNorm): # mqy
+  LOOP_OVER_DYNAMIC_HD = False
+  DYNAMIC_W_HIDDEN_DIM = 96 #  3 * (16 * 2), w1, w2, wg, rank = 2, num_heads=16
+  DW_PARAM_GATE = True
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormGatingMlpInput(PileDCLlamaMediumDWDDNoQKNorm): #mqy 
