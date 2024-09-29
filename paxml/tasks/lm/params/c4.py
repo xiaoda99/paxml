@@ -690,7 +690,7 @@ def configure_gpt3_task(
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
-                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation',
+                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic',
                 'mamba_lidxs', 'use_mamba']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -3144,6 +3144,22 @@ class PileLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, 
   QUERY_CHUNK_SIZE = 512  # v3 0.09602
   # pass  # v3
 
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1SpeedTest(PileLlama7B2Kx4x256x1): #mqy
+  pass # v4: 0.1679
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1DynamicHeadDenseSpeedTest(PileLlama7B2Kx4x256x1): #mqy
+  REMAT = True # v4: oom   
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+  DYNAMIC_HEAD_RANK = 4
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+
 @experiment_registry.register
 class PileLlama7B2Kx4x256x1QC256NoWindow(PileLlama7B2Kx4x256x1): #mqy
   QUERY_CHUNK_SIZE = 256  # v3 0.1006
@@ -3255,9 +3271,27 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
 class PileLlamaXLSlim(PileLlamaXL):
   NUM_LAYERS = 48 
   MODEL_DIMS = 1408 
-  HIDDEN_DIMS = 4080 
+  HIDDEN_DIMS = 4080  # 1 layer params 12 * 2048 * 2048 approximately equal to 2 layer params (4080 * 1408 * 3 + 1408 * 1408 * 4) * 2
   NUM_HEADS = 22
   DIMS_PER_HEAD = 64
+
+class _DynamicDenseConfig:
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DENSE_CONN = True
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
+class PileLlamaXLSlimDynamicDenseFix(_DynamicDenseConfig, PileLlamaXLSlim): # mqy
+  CHECKPOINT_EVERY_N_STEPS = 1000
 
 @experiment_registry.register
 class PileLlamaXLDense1x1(PileLlamaXL):
@@ -3554,7 +3588,7 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
-class PileMambaMediumDebug4(PileLlamaMedium):
+class PileMambaMediumDebug6(PileLlamaMedium):
   REMAT = True # v4: 0.24
   USE_REPEATED_LAYER = False
   USE_MAMBA = True
@@ -3762,6 +3796,55 @@ class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVProjQK(PileLlamaMediumHead
 @experiment_registry.register
 class PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVSepProj(PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKV):
   DYNAMIC_HEAD_SEPERATE_PARAM = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDense(PileLlamaMedium): # dynamic head dense baseline, same to PileLlamaMediumHeadDynDenseDw2Init0Dw1NormResQKVO
+  REMAT = True # v4: 0.368 steps/sec
+  USE_REPEATED_LAYER = False
+  DYNAMIC_HEAD_DENSE = True
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo'
+  DYNAMIC_HEAD_RANK = 4
+  USE_DENSE_NORM = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  SAVE_V_OUT = True
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseDynDense(_DynamicDenseConfig, PileLlamaMediumDynamicHeadDense):
+  pass
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseVoutR1Static(PileLlamaMediumDynamicHeadDense):
+  V_OUT_RANK = 1
+  V_OUT_DYNAMIC = False
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseVoutR4Static(PileLlamaMediumDynamicHeadDense):
+  V_OUT_RANK = 4
+  V_OUT_DYNAMIC = False
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseVoutR4Dynamic(PileLlamaMediumDynamicHeadDense):
+  V_OUT_RANK = 4
+  V_OUT_DYNAMIC = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseLayerwiseRank(PileLlamaMediumDynamicHeadDense):
+  DYNAMIC_HEAD_RANK = tuple([i for i in range(1,5) for _ in range(6)]) #[1...1,2...2,3...3,4...4] 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseInterleaved(PileLlamaMediumDynamicHeadDense):
+  DYNAMIC_HEAD_DENSE = [False, True] * 12
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseVoutR4StaticInterleaved(PileLlamaMediumDynamicHeadDenseVoutR4Static):
+  DYNAMIC_HEAD_DENSE = [False, True] * 12
 
 @experiment_registry.register
 class PileLlamaMediumHead8(PileLlamaMedium): #mqy
