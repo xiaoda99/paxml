@@ -686,11 +686,11 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dense_conn_learnable', 'dynamic_dense', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_learnable', 'dynamic_dense', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
-                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic',
+                'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
                 'mamba_lidxs', 'use_mamba']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
@@ -1218,6 +1218,20 @@ class _SlimLlama7B(_Llama7B):
   NUM_LAYERS = 48
   HIDDEN_DIMS = 5504  # XD: MODEL_DIMS * 4 // 3
 
+class _DynamicDenseConfig:
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DENSE_CONN = True
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+  
 @experiment_registry.register
 class Pythia7B(C4SpmdLlama7B):
   USE_BIAS = True
@@ -3147,7 +3161,7 @@ class PileLlama7B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, 
 
 @experiment_registry.register
 class PileLlama7B2Kx4x256x1SpeedTest(PileLlama7B2Kx4x256x1): #mqy
-  pass # v4: 0.1679
+  pass # v4: 0.1679, v5p: 0.182
 
 @experiment_registry.register
 class PileLlama7B2Kx4x256x1DynamicHeadDenseSpeedTest(PileLlama7B2Kx4x256x1): #mqy
@@ -3159,6 +3173,17 @@ class PileLlama7B2Kx4x256x1DynamicHeadDenseSpeedTest(PileLlama7B2Kx4x256x1): #mq
   USE_DENSE_NORM = True
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
   SAVE_V_OUT = True
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1DynamicDenseQKVMSpeedTest(_DynamicDenseConfig, PileLlama7B2Kx4x256x1):
+  CHECKPOINT_EVERY_N_STEPS = 1000 # v5p: todo
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+
+@experiment_registry.register
+class PileLlama7B2Kx4x256x1DynamicDenseQKVMConnAttnSpeedTest(_DynamicDenseConfig, PileLlama7B2Kx4x256x1):
+  CHECKPOINT_EVERY_N_STEPS = 1000 # v5p: 0.140
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+  DENSE_CONN_ON_ATTN = True
 
 @experiment_registry.register
 class PileLlama7B2Kx4x256x1QC256NoWindow(PileLlama7B2Kx4x256x1): #mqy
@@ -3275,19 +3300,7 @@ class PileLlamaXLSlim(PileLlamaXL):
   NUM_HEADS = 22
   DIMS_PER_HEAD = 64
 
-class _DynamicDenseConfig:
-  REMAT = True
-  USE_REPEATED_LAYER = False
-  DENSE_CONN = True
-  DYNAMIC_DENSE = True
-  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
-  USE_DENSE_NORM = True
-  VARIABLE_NORM_SUMMARY = False 
-  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
-    """Returns the task parameters."""
-    task_p = super().task()
-    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
-    return task_p
+
 
 @experiment_registry.register
 class PileLlamaXLSlimDynamicDenseFix(_DynamicDenseConfig, PileLlamaXLSlim): # mqy
@@ -3816,6 +3829,24 @@ class PileLlamaMediumDynamicHeadDense(PileLlamaMedium): # dynamic head dense bas
     return task_p
 
 @experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseDebug(PileLlamaMediumDynamicHeadDense):  # mqy
+  # llama baseline: 0.817, dynamic dense: 0.72, dynamic head dense: 0.52
+  # previous_v_out -> q :  0.769
+  # previous_v_out -> qkvo :  0.761 
+  # dynamic_dense(previous_v_out) -> q  :  0.678
+  # K= (L+C)RN -> CRN: 0.558 
+  # mean(v_out) - > q : 0.765
+  # dynamic_dense(v_out), shard(v_out, v_in, dw)  -> q : 0.593
+  # dynamic_dense(v_out), no shard -> q : 0.593
+  # dynamic_dense(v_out), no shard, reduce K -> q : 0.618
+  # mean(v_out)[:4] @ dw2 -> q : 0.676 
+  # dynamic_conv(v_out) -> q: 0.697
+  # dynamic_conv4(v_out) -> qkvo: 0.633
+  # DYNAMIC_HEAD_DENSE_TYPE = 'q' 
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkvo' #
+
+
+@experiment_registry.register
 class PileLlamaMediumDynamicHeadDenseDynDense(_DynamicDenseConfig, PileLlamaMediumDynamicHeadDense):
   pass
 
@@ -3853,7 +3884,7 @@ class PileLlamaMediumHead8(PileLlamaMedium): #mqy
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1(PileLlamaMedium): #mqy
-  DENSE_CONN = True
+  DENSE_CONN = True # denseformer v5p: 0.747
   REMAT = True
   USE_REPEATED_LAYER = False
 
@@ -3926,6 +3957,60 @@ class PileLlamaMediumDense1x1DynamicGeluOuterOVGaussInitDenseNorm(PileLlamaMediu
 class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic): #mqy dynamic dense baseline
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
   USE_DENSE_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKV(_DynamicDenseConfig, PileLlamaMedium):
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  DYNAMIC_DENSE_TYPE = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVDebug(PileLlamaMediumDynamicDenseQKV):
+  # Llama: 0.818
+  # denseformer: 0.747
+  # C=1, 'q', 0.718 : LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=2, 'qk', 0.718, calculate mean of dw, then compose : CBTL-> BTL mean(dim=0); LBTD, BTL -> BTD
+  # C=2, 'qk', 0.614 : LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=2, 'qk', 0.49 split chunks along T dim, chunk_size=256: LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=2, 'qk', 0.506 split chunks along T dim, chunk_size=1024: LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=2, 'qk', 0.718 for-loop along C dim: LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=3, 'qkv', 0.691 for-loop along C dim: LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  # C=3, 'qkv', 0.661 for-loop along C dim: LBTD, CBTL -> CBTD; 
+  # C=4, 'qkvm', 0.590 : LBTD, CBTL -> CBTD -> BTD mean(dim=0); 
+  DYNAMIC_DENSE_TYPE = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVConnAttn(PileLlamaMediumDynamicDenseQKV):
+  DENSE_CONN_ON_ATTN = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaMedium):
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMNoStack(PileLlamaMediumDynamicDenseQKVM):
+  DYNAMIC_DENSE_STACK = False # v5p: 0.643
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMGatingMlpInputFix(PileLlamaMediumDynamicDenseQKVM):
+  GATING_MLP_INPUT = 'learnable_bias+b_only' # v5p: 0.625
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFast(PileLlamaMediumDynamicDenseQKVM):
+  pass # v5p: 0.637
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMConnAttn(PileLlamaMediumDynamicDenseQKVM):
+  DENSE_CONN_ON_ATTN = True # v5p: 0.580
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMConnAttnForHeadDenseFix(PileLlamaMediumDynamicDenseQKVMConnAttn):
+  ATTN_OUT_ORIG = True # v5p: 0.635
+  DENSE_BIAS_INIT_METHOD = 'zeros3+current_only' # qkv + m 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMConnAttnFast(PileLlamaMediumDynamicDenseQKVMConnAttn):
+  pass # v5p: 0.581
 
 @experiment_registry.register
 class PileLlamaMediumDense1x1DynamicGeluDenseNormSaveEvery1000(PileLlamaMediumDense1x1DynamicGeluDenseNorm):
