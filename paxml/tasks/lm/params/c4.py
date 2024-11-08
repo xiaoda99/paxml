@@ -446,6 +446,24 @@ def set_adam_and_learning_rate_schedule(
         min_ratio=cls.LR_COS_MIN_RATIO,
         max=cls.LR_COS_MAX,
     )
+  elif cls.LR_SCHEDULE == 'constant':
+    lp.optimizer.lr_schedule = pax_fiddle.Config(
+        schedules.Constant,
+        value=cls.LEARNING_RATE,
+    )
+  elif 'linear_rampup_cosine_decay+linear_decay':
+    lp.optimizer.lr_schedule = pax_fiddle.Config(
+        schedules.LinearRampupCosineDecayLinearDecay,
+        warmup_steps=cls.LR_COS_WARMUP,
+        decay_start=cls.LR_COS_DECAY_START,
+        decay_end=cls.LR_COS_DECAY_END,
+        min_ratio=cls.LR_COS_MIN_RATIO,
+        max=cls.LR_COS_MAX,
+        linear_decay_start=cls.LR_DECAY_START,
+        linear_decay_start_lr=cls.LR_DECAY_START_LR,
+        linear_decay_end=cls.LR_DECAY_END,
+        linear_decay_end_lr=cls.LR_DECAY_END_LR,
+    )
   else:
     raise NotImplementedError(
         f'Learning rate schedule {cls.LR_SCHEDULE} is not supported.'
@@ -686,7 +704,7 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_learnable', 'dynamic_dense', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
@@ -3293,14 +3311,22 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
 
 @experiment_registry.register
+class PileLlamaXLDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaXL): # mqy
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+  DYNAMIC_DENSE_STACK = False
+
+@experiment_registry.register
+class PileLlamaXLDynamicDenseQKVMConnAttn(PileLlamaXLDynamicDenseQKVM):
+  DENSE_CONN_ON_ATTN = True
+
+@experiment_registry.register
 class PileLlamaXLSlim(PileLlamaXL):
   NUM_LAYERS = 48 
   MODEL_DIMS = 1408 
   HIDDEN_DIMS = 4080  # 1 layer params 12 * 2048 * 2048 approximately equal to 2 layer params (4080 * 1408 * 3 + 1408 * 1408 * 4) * 2
   NUM_HEADS = 22
   DIMS_PER_HEAD = 64
-
-
 
 @experiment_registry.register
 class PileLlamaXLSlimDynamicDenseFix(_DynamicDenseConfig, PileLlamaXLSlim): # mqy
@@ -3601,6 +3627,35 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumMemoryTest(PileLlamaMedium):
+  PERCORE_BATCH_SIZE = 8
+
+@experiment_registry.register
+class PileLlamaMediumSchedulerDebug(PileLlamaMedium): # test WSD scheduler
+  PERCORE_BATCH_SIZE = 1
+  LR_COS_DECAY_START = 635
+  LR_COS_DECAY_END = 1135
+
+@experiment_registry.register
+class PileLlamaMediumFTCT7Kstep(PileLlamaMedium): #Llama 
+  TRAINING_NUM_BATCHES_TO_SKIP = None
+  SAVE_ON_STEPS = list(range(13500, 21500, 3000))
+  LR_COS_WARMUP = 70 
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_MIN_RATIO = 0.1 
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 7000 
+
+@experiment_registry.register
+class PileLlamaMediumWSD27k(PileLlamaMedium): 
+  SAVE_ON_STEPS = list(range(0, 27000, 3000)) + [1000, 2000, 13500]
+  LR_COS_WARMUP = 135 
+  LR_COS_MIN_RATIO = 0.1 
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 27000 
+  LR_COS_DECAY_START = int(LR_COS_DECAY_END * 0.9) # 10% decay steps
+
+@experiment_registry.register
 class PileMambaMediumDebug6(PileLlamaMedium):
   REMAT = True # v4: 0.24
   USE_REPEATED_LAYER = False
@@ -3861,6 +3916,11 @@ class PileLlamaMediumDynamicHeadDenseVoutR4Static(PileLlamaMediumDynamicHeadDens
   V_OUT_DYNAMIC = False
 
 @experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseVoutR4StaticDynDenseM(_DynamicDenseConfig, PileLlamaMediumDynamicHeadDenseVoutR4Static):
+  DYNAMIC_DENSE_TYPE = 'm'
+  DYNAMIC_DENSE_STACK = False
+
+@experiment_registry.register
 class PileLlamaMediumDynamicHeadDenseVoutR4Dynamic(PileLlamaMediumDynamicHeadDense):
   V_OUT_RANK = 4
   V_OUT_DYNAMIC = True
@@ -3959,6 +4019,13 @@ class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic
   USE_DENSE_NORM = True
 
 @experiment_registry.register
+class PileLlamaMediumDynamicDenseDebug(_DynamicDenseConfig, PileLlamaMedium):
+  # NUM_LAYERS = 24 # v4: 0.487
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+  DYNAMIC_DENSE_STACK = False
+  # PERCORE_BATCH_SIZE = 4
+
+@experiment_registry.register
 class PileLlamaMediumDynamicDenseQKV(_DynamicDenseConfig, PileLlamaMedium):
   CHECKPOINT_EVERY_N_STEPS = 1000
   DYNAMIC_DENSE_TYPE = 'qkv'
@@ -3988,8 +4055,162 @@ class PileLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaMedium):
   DYNAMIC_DENSE_TYPE = 'qkvm'
 
 @experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLn(PileLlamaMediumDynamicDenseQKVM): # dynamic dense qkvm baseline
+  DYNAMIC_DENSE_SEP_QKV_LN = True
+  DYNAMIC_DENSE_STACK = False
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnMemoryTest(PileLlamaMediumDynamicDenseQKVMSepLn):
+  PERCORE_BATCH_SIZE = 8
+  DYNAMIC_DENSE_SEP_QKV_LN = True
+  DYNAMIC_DENSE_STACK = False
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVLMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn):
+  DYNAMIC_DENSE_TYPE = 'qkvlm'
+
+# finetune DynamicDenseQKVM
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFT(PileLlamaMediumDynamicDenseQKVMSepLn): # FT: finetune from the first step of dataset
+  SAVE_ON_STEPS = list(range(13500, 16500, 1000)) # reload llama meidum params only
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnWSD27k(PileLlamaMediumDynamicDenseQKVMSepLn): 
+  SAVE_ON_STEPS = list(range(0, 27000, 3000)) + [1000, 2000, 13500]
+  LR_COS_WARMUP = 135 
+  LR_COS_MIN_RATIO = 0.1 
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 27000 
+  LR_COS_DECAY_START = int(LR_COS_DECAY_END * 0.9) # 10% decay steps
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCT(PileLlamaMediumDynamicDenseQKVMSepLn): # FTCT: finetune continually from the lastest step of dataset (bug-fix: use step_in_file)
+  TRAINING_NUM_BATCHES_TO_SKIP = None
+  SAVE_ON_STEPS = list(range(13500, 16500, 1000))
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCTWSD(PileLlamaMediumDynamicDenseQKVMFTCT): # finetune on wsd checkpoint at 13.5 step with total step 27k
+  LR_COS_WARMUP = 135 
+  LR_COS_MIN_RATIO = 0.1 
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 13500 
+  LR_COS_DECAY_START = int(LR_COS_DECAY_END * 0.9) # 10% decay steps
+
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCTConstLr(PileLlamaMediumDynamicDenseQKVMFTCT):
+  LR_SCHEDULE = 'constant'
+  LEARNING_RATE = 3e-5
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCT7Kstep(PileLlamaMediumDynamicDenseQKVMSepLn): #
+  TRAINING_NUM_BATCHES_TO_SKIP = None
+  SAVE_ON_STEPS = list(range(13500, 21500, 3000))
+  LR_COS_WARMUP = 70 
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_MIN_RATIO = 0.1 
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 7000 
+
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCT7KstepLearnScale(PileLlamaMediumDynamicDenseQKVMFTCT7Kstep):
+  DENSE_FINETUNE_SCALE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCTConstLrLearnScale(PileLlamaMediumDynamicDenseQKVMFTCTConstLr):
+  DENSE_FINETUNE_SCALE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTDebug(PileLlamaMediumDynamicDenseQKVMFT):
+  LR_COS_WARMUP = 13 #* 4
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_MIN_RATIO = 0.99 # nearly constant lr: 3e-5
+  
+  LEARNING_RATE = 3e-5
+  LR_COS_DECAY_END = 1350 #* 4
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTCompLayerDiff(PileLlamaMediumDynamicDenseQKVMFT):
+  LR_SCHEDULE = 'constant'
+  LEARNING_RATE = 3e-5
+  COMP_DENSE_DIFF = True
+
+class _FTWarmUp:
+  LR_COS_WARMUP = 20 #* 4
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_MIN_RATIO = 0.1 # nearly constant lr: 3e-5
+  LEARNING_RATE = 3e-4
+  LR_COS_DECAY_END = 2000 #* 4
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTWarmUp(_FTWarmUp, PileLlamaMediumDynamicDenseQKVMFT):
+  pass
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTFastDecay(PileLlamaMediumDynamicDenseQKVMFT):
+  SAVE_ON_STEPS = list(range(13500, 18500, 1000))
+  LR_SCHEDULE = 'linear_rampup_cosine_decay+linear_decay' # first 2k: default, second 2k: Linear decay
+  LR_DECAY_START = 2000
+  LR_DECAY_START_LR = 3e-4
+  LR_DECAY_END = 4000
+  LR_DECAY_END_LR = 3e-5
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTFrezLlama(_FTWarmUp, PileLlamaMediumDynamicDenseQKVMFT):
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    lp = task_p.train.learner
+    # lp.bprop_variable_inclusion = ['.*dense.*', '.*layer_norms.*', '.*final_ln.*']
+    lp.bprop_variable_inclusion = ['.*dense.*', '.*layer_norms.*']
+    return task_p 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTFrezLlamaUnfrez(_FTWarmUp, PileLlamaMediumDynamicDenseQKVMFT):
+  pass # continual training of PileLlamaMediumDynamicDenseQKVMFTFrezLlama at step 15.5k
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFT10xLr2Kstep10Warmup(PileLlamaMediumDynamicDenseQKVMFT):
+  LR_COS_WARMUP = 200 #* 4
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_MIN_RATIO = 0.01 # nearly constant lr: 3e-5
+  LEARNING_RATE = 3e-3
+  LR_COS_DECAY_END = 2000 #* 4
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTTinyLr(PileLlamaMediumDynamicDenseQKVMFT):
+  SAVE_ON_STEPS = list(range(13500, 16500, 1000)) 
+  LR_COS_MIN_RATIO = 1e-4 # default: 1e-1 (lr: 3e-5) -> 1e-4 (lr: 3e-8)
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTNormHid(PileLlamaMediumDynamicDenseQKVMSepLn):
+  SAVE_ON_STEPS = list(range(13500, 16500, 1000))
+  DYNAMIC_DENSE_FT_NORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMFTWidenModelDim(PileLlamaMediumDynamicDenseQKVMSepLn):
+  SAVE_ON_STEPS = list(range(13500, 16500, 1000)) # reload llama meidum params only
+  MODEL_DIMS = 1152 # 1024 + 128
+  # HIDDEN_DIMS = 3072 # 2816 + 256
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMMSepLnFFN2Fix3(PileLlamaMediumDynamicDenseQKVMSepLn):
+  NUM_FFN = 2
+  HIDDEN_DIMS = 1408 # 2816 //2 
+  DYNAMIC_DENSE_TYPE = 'qkvmm'
+  
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnScaleLn(PileLlamaMediumDynamicDenseQKVMSepLn):
+  DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
+
+@experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMNoStack(PileLlamaMediumDynamicDenseQKVM):
   DYNAMIC_DENSE_STACK = False # v5p: 0.643
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMGatingMlpInputSigmoid(PileLlamaMediumDynamicDenseQKVMNoStack):
+  GATING_MLP_INPUT = 'sigmoid'
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMGatingMlpInputFix(PileLlamaMediumDynamicDenseQKVM):
@@ -4655,6 +4876,14 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD): # dcformer base line 
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileDCLlamaMediumDWDDNoQKNorm): # dynamic dense qkvm + dcformer
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+  DYNAMIC_DENSE_SEP_QKV_LN = True
+  DYNAMIC_DENSE_STACK = False
+  WINDOW_SIZE = [256, None] * 12
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormDynGate(PileDCLlamaMediumDWDDNoQKNorm): # mqy
