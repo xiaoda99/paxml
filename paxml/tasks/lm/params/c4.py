@@ -704,7 +704,8 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                 'hyper_conn', 'hyper_conn_n', 'hyper_conn_tanh', 'hyper_conn_merge_wcdc',
+                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
@@ -753,10 +754,17 @@ def configure_gpt3_task(
     transformer_layer_p.tr_atten_tpl.interleave_kv_heads = getattr(cls, 'INTERLEAVE_KV_HEADS', True)  # XD
     if hasattr(cls, 'MERGE_DW_PROJ'): transformer_layer_p.tr_atten_tpl.merge_dw_proj = cls.MERGE_DW_PROJ  # XD
     if getattr(cls, 'OUTPUT_LAYER_INIT_METHOD', None) is not None:  # XD
-      output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS)) \
-        if cls.OUTPUT_LAYER_INIT_METHOD == 'wang_init' else cls.OUTPUT_LAYER_INIT_METHOD
-      transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_std
-      transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
+      if cls.OUTPUT_LAYER_INIT_METHOD == 'hyper_conn_init':
+        scale_factor = math.sqrt(getattr(cls, "HYPER_CONN_N", 4))
+        output_layer_attn_std = 1 / math.sqrt(cls.MODEL_DIMS) / scale_factor
+        output_layer_ffn_std = math.sqrt(2 / (cls.MODEL_DIMS + cls.HIDDEN_DIMS)) / scale_factor
+        transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_attn_std
+        transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_ffn_std
+      else:
+        output_layer_std = 2 / (cls.NUM_LAYERS * math.sqrt(cls.MODEL_DIMS)) \
+          if cls.OUTPUT_LAYER_INIT_METHOD == 'wang_init' else cls.OUTPUT_LAYER_INIT_METHOD
+        transformer_layer_p.tr_atten_tpl.output_layer_std = output_layer_std
+        transformer_layer_p.tr_fflayer_tpl.output_layer_std = output_layer_std
     if hasattr(cls, 'SEGMENT_SIZE'):  # XD
       transformer_layer_p.tr_fflayer_tpl.segment_size = cls.SEGMENT_SIZE
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
@@ -3627,6 +3635,23 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   # TODO: _stepsx4 run should restart @42000
 
 @experiment_registry.register
+class PileLlamaMediumHyperConn(PileLlamaMedium):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  HYPER_CONN = True
+  HYPER_CONN_N = 4
+  OUTPUT_LAYER_INIT_METHOD = 'hyper_conn_init'
+  CHECKPOINT_EVERY_N_STEPS = 1000
+
+@experiment_registry.register
+class PileLlamaMediumHyperConnTanh(PileLlamaMediumHyperConn): # SepWCDC, SumHid, NoSumEmb
+  HYPER_CONN_TANH = True
+
+@experiment_registry.register
+class PileLlamaMediumHyperConnSepWCDCSumHidNoSumEmb(PileLlamaMediumHyperConn): # fixed version
+  pass
+
+@experiment_registry.register
 class PileLlamaMediumMemoryTest(PileLlamaMedium):
   PERCORE_BATCH_SIZE = 8
 
@@ -4058,6 +4083,25 @@ class PileLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaMedium):
 class PileLlamaMediumDynamicDenseQKVMSepLn(PileLlamaMediumDynamicDenseQKVM): # dynamic dense qkvm baseline
   DYNAMIC_DENSE_SEP_QKV_LN = True
   DYNAMIC_DENSE_STACK = False
+
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnCompExtraLayerdiff(PileLlamaMediumDynamicDenseQKVMSepLn):
+  DENSE_CONN_ON_LAYERDIFF = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnHyperConn(PileLlamaMediumDynamicDenseQKVMSepLn):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  HYPER_CONN = True
+  HYPER_CONN_N = 4
+  OUTPUT_LAYER_INIT_METHOD = 'hyper_conn_init'
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  HYPER_CONN_MERGE_WCDC = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnHyperConnDefaultInit(PileLlamaMediumDynamicDenseQKVMSepLnHyperConn):
+  OUTPUT_LAYER_INIT_METHOD = None
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLnMemoryTest(PileLlamaMediumDynamicDenseQKVMSepLn):
