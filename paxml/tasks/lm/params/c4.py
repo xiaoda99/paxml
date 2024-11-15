@@ -705,10 +705,11 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'hyper_conn', 'hyper_conn_n', 'hyper_conn_tanh', 'hyper_conn_merge_wcdc',
-                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dynamic_dense_share_qk_way',
+                 'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
-                'dynamic_dense_act_cls', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
+                'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
                 'mamba_lidxs', 'use_mamba']: # mqy
       NAME = name.upper() 
@@ -4079,11 +4080,50 @@ class PileLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaMedium):
   CHECKPOINT_EVERY_N_STEPS = 1000
   DYNAMIC_DENSE_TYPE = 'qkvm'
 
+class MultiWayDynamicDenseConfig:
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DENSE_CONN = True
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+  VARIABLE_NORM_SUMMARY = False 
+  DYNAMIC_DENSE_TYPE = 'qkvm'
+  DYNAMIC_DENSE_SEP_QKV_LN = True
+  DYNAMIC_DENSE_STACK = False
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
+class PilePythiaMedium(PileDataParams, PythiaInit, Pythia410M):
+  PYTHIA_ROTARY = True
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 8
+
+@experiment_registry.register
+class PilePythiaMediumx6p7BToken(PilePythiaMedium):
+  SAVE_ON_STEPS = [13500]
+  LR_COS_WARMUP = 135
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 13500
+
+@experiment_registry.register
+class PileMUDDPythiaMediumx6p7BToken(MultiWayDynamicDenseConfig, PilePythiaMediumx6p7BToken):
+  CHECKPOINT_EVERY_N_STEPS = 500
+
+@experiment_registry.register
+class PileMUDDPythiaMediumx6p7BTokenFixLastFixParallel(PileMUDDPythiaMediumx6p7BToken):
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
+  CHECKPOINT_EVERY_N_STEPS = 1000
+
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLn(PileLlamaMediumDynamicDenseQKVM): # dynamic dense qkvm baseline
   DYNAMIC_DENSE_SEP_QKV_LN = True
   DYNAMIC_DENSE_STACK = False
-
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLnCompExtraLayerdiff(PileLlamaMediumDynamicDenseQKVMSepLn):
@@ -4243,7 +4283,29 @@ class PileLlamaMediumDynamicDenseQKVMMSepLnFFN2Fix3(PileLlamaMediumDynamicDenseQ
   NUM_FFN = 2
   HIDDEN_DIMS = 1408 # 2816 //2 
   DYNAMIC_DENSE_TYPE = 'qkvmm'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVGMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn):
+  DYNAMIC_DENSE_TYPE = 'qkvgm'
+  DYNAMIC_DENSE_SEPERATE_GATING_LN = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseKVMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm
+  DYNAMIC_DENSE_TYPE = 'kvm'
   
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseKVMSepLnShareQKWay(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm
+  DYNAMIC_DENSE_TYPE = 'kvm'
+  DYNAMIC_DENSE_SHARE_QK_WAY = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQVMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qvm
+  DYNAMIC_DENSE_TYPE = 'qvm'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qkm
+  DYNAMIC_DENSE_TYPE = 'qkm'
+
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLnScaleLn(PileLlamaMediumDynamicDenseQKVMSepLn):
   DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
