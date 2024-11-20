@@ -709,7 +709,7 @@ def configure_gpt3_task(
                  'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
-                'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
+                'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'dynamic_dense_by_group_heads', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
                 'mamba_lidxs', 'use_mamba']: # mqy
       NAME = name.upper() 
@@ -4092,6 +4092,7 @@ class MultiWayDynamicDenseConfig:
   DYNAMIC_DENSE_SEP_QKV_LN = True
   DYNAMIC_DENSE_STACK = False
   CHECKPOINT_EVERY_N_STEPS = 1000
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True 
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     """Returns the task parameters."""
     task_p = super().task()
@@ -4112,6 +4113,10 @@ class PilePythiaMediumx6p7BToken(PilePythiaMedium):
   LR_COS_DECAY_END = 13500
 
 @experiment_registry.register
+class PilePythiaMediumx6p7BTokenSequential(PilePythiaMediumx6p7BToken):
+  GPT_J_RESIDUAL = False
+
+@experiment_registry.register
 class PileMUDDPythiaMediumx6p7BToken(MultiWayDynamicDenseConfig, PilePythiaMediumx6p7BToken):
   CHECKPOINT_EVERY_N_STEPS = 500
 
@@ -4121,9 +4126,45 @@ class PileMUDDPythiaMediumx6p7BTokenFixLastFixParallel(PileMUDDPythiaMediumx6p7B
   CHECKPOINT_EVERY_N_STEPS = 1000
 
 @experiment_registry.register
+class PileMUDDPythia3B(MultiWayDynamicDenseConfig, PilePythia3B128x1FixRot):
+  CHECKPOINT_EVERY_N_STEPS = 500
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
+  PERCORE_BATCH_SIZE = 4 # 4
+  ICI_MESH_SHAPE = [1, 256, 1] #  256 v5p-64
+  QK_NORM = True
+
+@experiment_registry.register
+class PileMUDDLlama3B(MultiWayDynamicDenseConfig, PileDataParams, PythiaInit, _Llama3B):
+  LEARNING_RATE = 3.2e-4
+  
+  LR_COS_WARMUP = 1430
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 143000
+  LR_COS_MIN_RATIO = 0.01
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  SUMMARY_INTERVAL_STEPS = 10
+
+  CHECKPOINT_EVERY_N_STEPS = 500
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
+  PERCORE_BATCH_SIZE = 4
+  ICI_MESH_SHAPE = [1, 256, 1] 
+  QK_NORM = True
+
+@experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLn(PileLlamaMediumDynamicDenseQKVM): # dynamic dense qkvm baseline
   DYNAMIC_DENSE_SEP_QKV_LN = True
   DYNAMIC_DENSE_STACK = False
+
+@experiment_registry.register
+class PileMUDDLlamaMedium(MultiWayDynamicDenseConfig, PileLlamaMedium): # muddllama medium baseline
+  pass
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseQKVMSepLnByGroupHeadsFix(PileLlamaMediumDynamicDenseQKVMSepLn): # ablations fix glu norm
+  DYNAMIC_DENSE_BY_GROUP_HEADS = True
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLnCompExtraLayerdiff(PileLlamaMediumDynamicDenseQKVMSepLn):
@@ -4290,21 +4331,25 @@ class PileLlamaMediumDynamicDenseQKVGMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn
   DYNAMIC_DENSE_SEPERATE_GATING_LN = True
 
 @experiment_registry.register
-class PileLlamaMediumDynamicDenseKVMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm
+class PileLlamaMediumDynamicDenseKVMSepLnFix(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm fix glu norm
   DYNAMIC_DENSE_TYPE = 'kvm'
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
   
 @experiment_registry.register
-class PileLlamaMediumDynamicDenseKVMSepLnShareQKWay(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm
+class PileLlamaMediumDynamicDenseKVMSepLnShareQKWayFix(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> kvm fix glu norm
   DYNAMIC_DENSE_TYPE = 'kvm'
   DYNAMIC_DENSE_SHARE_QK_WAY = True
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
 
 @experiment_registry.register
-class PileLlamaMediumDynamicDenseQVMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qvm
+class PileLlamaMediumDynamicDenseQVMSepLnFix(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qvm fix glu norm
   DYNAMIC_DENSE_TYPE = 'qvm'
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
 
 @experiment_registry.register
-class PileLlamaMediumDynamicDenseQKMSepLn(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qkm
+class PileLlamaMediumDynamicDenseQKMSepLnFix(PileLlamaMediumDynamicDenseQKVMSepLn): # qkvm-> qkm fix glu norm
   DYNAMIC_DENSE_TYPE = 'qkm'
+  DYNAMIC_DENSE_FIX_LAST_LAYER = True
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLnScaleLn(PileLlamaMediumDynamicDenseQKVMSepLn):
@@ -4982,6 +5027,13 @@ class PileDCLlamaMediumDWDD(PileDCLlamaMedium):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNorm(PileDCLlamaMediumDWDD): # dcformer base line 
   QK_NORM = False # v4 0.370,  w/o probs mask 0.377
+
+@experiment_registry.register
+class PileDCPythiaMedium(PilePythiaMedium, PileDCLlamaMediumDWDDNoQKNorm):
+  SAVE_ON_STEPS = [13500]
+  LR_COS_WARMUP = 135
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 13500
 
 @experiment_registry.register
 class PileDCLlamaMediumDynamicDenseQKVM(_DynamicDenseConfig, PileDCLlamaMediumDWDDNoQKNorm): # dynamic dense qkvm + dcformer
@@ -6839,6 +6891,15 @@ class FlanMiniEval(BaseEval):
     KEY_MAP = {"targets": "input_ids", "labels": "labels"}
     TASK_NAME = 'FlanMini'
     EVAL_LOOP_NUM_BATCHES = 80
+
+
+@experiment_registry.register
+class PileMUDDPythiaMediumx6p7BTokenFixLastFixParallelPileEval(PileEval,PileMUDDPythiaMediumx6p7BTokenFixLastFixParallel):
+  TASK_NAME='PileMUDDPythiaMediumx6p7BTokenFixLastFixParallelPileEval'
+  EVAL_LOOP_NUM_BATCHES = 50 # about 1/3 pile validation dataset, 162 as full
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 16, 1]
+  PERCORE_BATCH_SIZE = 32 * 2
 
 @experiment_registry.register
 class PilePythiaXLDynWFFN8HD64Win256AlignedPileEval(PileEval, PilePythiaXLDynWFFN8HD64Win256Aligned):
