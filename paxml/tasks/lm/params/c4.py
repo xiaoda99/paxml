@@ -1194,7 +1194,7 @@ class C4SpmdLlama7B(C4SpmdLlamaXXL):
   QUERY_CHUNK_SIZE = 128
   SUMMARY_INTERVAL_STEPS = 10
 
-class MultiWayDynamicDenseConfig:
+class MultiWayDynamicDenseConfig:  
   REMAT = True
   USE_REPEATED_LAYER = False
   DENSE_CONN = True
@@ -1212,6 +1212,11 @@ class MultiWayDynamicDenseConfig:
     task_p = super().task()
     task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
     return task_p
+  ## additional config
+  # DYNAMIC_DENSE_HIDDEN_ROUND = True
+  # DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  # HIDDEN_DIMS = [int(5504 * (i/23 +0.5)) for i in range(24)]  # num_layers=24, hid_dim=5504 0.5 -> 1.5
+
 
 class _Llama(C4SpmdGpt3AdamOrgHP):
   ACTIVATION_CLS = layers.SiLU  # layers.SiLU/GELU  # XD
