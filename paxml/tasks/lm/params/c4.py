@@ -711,7 +711,7 @@ def configure_gpt3_task(
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'dynamic_dense_k_from_res', 'dynamic_dense_keep_residual', 'dynamic_dense_by_group_heads', 'dynamic_dense_param_residual', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
-                'mamba_lidxs', 'use_mamba']: # mqy
+                'mamba_lidxs', 'use_mamba', 'ddense_w_gen_pattern', 'ddense_w_gen_chunk_size']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -4402,6 +4402,11 @@ class PileMUDDLlamaMediumPlusOcdbt(PileMUDDLlamaMediumPlus):
   TENSORSTORE_USE_OCDBT = True
   ASYNC_CHECKPOINT = True
   CHECKPOINT_EVERY_N_STEPS = 100
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusGenPatternQKVM(PileMUDDLlamaMediumPlus):
+  DDENSE_W_GEN_PATTERN = 'qkvm'
+  DDENSE_W_GEN_CHUNK_SIZE = 2048
 
 @experiment_registry.register
 class PileMUDDLlamaMediumDynRes(PileMUDDLlamaMedium):
