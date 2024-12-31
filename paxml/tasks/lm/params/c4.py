@@ -712,12 +712,12 @@ def configure_gpt3_task(
                 'float32_logits', 'float32_probs', 'float32_value', 'qk_norm', 'transpose_logits',
                 'shared_qk_dim', 'shared_ov_dim', 'dim_per_shared_head', 'scale_shared_key', 'scale_init', 'scale_bias', 'rotate_shared_qk',
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
-                'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls',
+                'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
                 ]:
       NAME = name.upper()
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
-      if hasattr(cls, NAME):
+      if hasattr(cls, NAME) and (not NAME.startswith('WINDOW_SIZE') or getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None):
         setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
     dynamic_w_attrs = ['dynamic_w_init', 'dynamic_d_init', 
@@ -745,8 +745,8 @@ def configure_gpt3_task(
         setattr(transformer_layer_p.tr_atten_tpl.cross_head_post_proj_tpl, name, getattr(cls, 'PROBS_' + NAME))
     if getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None:
       transformer_layer_p.tr_atten_tpl.query_chunk_size = cls.QUERY_CHUNK_SIZE
-      if getattr(cls, 'WINDOW_SIZE', None) is not None:
-        transformer_layer_p.tr_atten_tpl.window_size = cls.WINDOW_SIZE
+      # if getattr(cls, 'WINDOW_SIZE', None) is not None:
+      #   transformer_layer_p.tr_atten_tpl.window_size = cls.WINDOW_SIZE
       for name in dynamic_w_attrs:
         NAME = name.upper()
         if prefix == 'early_' and any(hasattr(cls, s + NAME + '_EARLY') for s in ['', 'LOGITS_', 'PROBS_']):
@@ -2801,6 +2801,11 @@ class PileSpmdLlamaXLHead24x96ResTHDynWFFN8HD64DW1RmsNormWin256(_LlamaXLHead24x9
   pass  # v3 0.0841
 
 @experiment_registry.register
+class PileSpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWin256LR0006(PileSpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWin256):
+  LEARNING_RATE = 6e-4
+  LR_COS_MIN_RATIO = 1 / 60
+
+@experiment_registry.register
 class PileSpmdLlamaXLHead16x128(PileDataParams, C4SpmdLlamaXLHead16x128):
   NUM_LAYERS = 24  # v3 0.215
 
@@ -2837,6 +2842,10 @@ class PileSpmdLlamaXLHead16x128LR0006(PileSpmdLlamaXLHead16x128):
   LEARNING_RATE = 6e-4
   LR_COS_MIN_RATIO = 1 / 60
   QK_NORM = True
+
+@experiment_registry.register
+class PileSpmdLlamaXLHead16x128LR0006NoQKNorm(PileSpmdLlamaXLHead16x128LR0006):
+  QK_NORM = False
 
 # C4SpmdLlamaXLResTHLogitsFFN2GELUDynW0003LearnDiagProbsDWTanh  LOGITS/PROBS_DYNAMIC_W_INIT
 class _DC:
@@ -2935,7 +2944,8 @@ class _TrainConfig2Kx2x512x1:
   PERCORE_BATCH_SIZE = 2
   ICI_MESH_SHAPE = [1, 512, 1]
   EMBEDDING_LOOKUP_STYLE = 'index'
-  SUMMARY_INTERVAL_STEPS = 5
+  LM_HEAD_CHUNK_SIZE = 512
+  SUMMARY_INTERVAL_STEPS = 10
 
 @experiment_registry.register
 class PileDCLlama33B2Kx2x512x1(_TrainConfig2Kx2x512x1, PileDataParams, PythiaInit, DCLlama33B):
@@ -3004,10 +3014,44 @@ class PileDCLlama3B2Kx4x256x1(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit
   LR_COS_DECAY_START = LR_COS_WARMUP + 1
   LR_COS_DECAY_END = 143000
   LR_COS_MIN_RATIO = 0.01
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
 
 @experiment_registry.register
 class PileDCLlama3B2Kx4x256x1DWDD(PileDCLlama3B2Kx4x256x1):
+  USE_STATIC_W = False  # v4 0.221
+
+@experiment_registry.register
+class PileDCLlama3B2Kx4x256x1DWDDLR00032(PileDCLlama3B2Kx4x256x1DWDD):
+  LEARNING_RATE = 3.2e-4
+
+@experiment_registry.register
+class C4SpmdLlama3B(C4SpmdLlama7B):
+  MODEL_DIMS = 2560
+  HIDDEN_DIMS = 6192  # XD: MODEL_DIMS * 4 * 2 // 3  # should be 6912
+  DIMS_PER_HEAD = 80
+
+@experiment_registry.register  # C4SpmdLlama3B's HIDDEN_DIMS is wrong, worsen the result
+class PileSpmdLlama3B2Kx4x256x1DWDD(_TrainConfig2Kx4x256x1, PileDataParams, PythiaInit, C4SpmdLlama3B, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 128
+  LOGITS_DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  PROBS_DYNAMIC_W_INIT = WeightInit.Gaussian(0.00005)  # sqrt(1 / HD) * 2 / (M + I) * 0.01, total_scale <= 0.01
+  DYNAMIC_D_INIT = WeightInit.Gaussian(0.00014)  # sqrt(2 / (D + M)) * 0.005, total_scale <= 0.01
   USE_STATIC_W = False
+
+  QUERY_CHUNK_SIZE = 128
+  NUM_LAYERS_PER_BLOCK = 2
+  WINDOW_SIZE = [256, None]
+  MERGE_DW_PROJ = True
+  SUMMARY_VERBOSITY = 9
+
+  LEARNING_RATE = 5e-4
+  LR_COS_WARMUP = 1430
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 143000
+  LR_COS_MIN_RATIO = 0.01
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
 
 @experiment_registry.register
 class PileLlama3B2Kx8x128x1(_TrainConfig2Kx8x128x1, PileDataParams, PythiaInit, _Llama3B):
