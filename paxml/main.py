@@ -227,6 +227,7 @@ def get_tpu_type(exp_name):  # XD
   if 'v4' in exp_name: return exp_name.replace('v4', ''), 'v4'
   elif 'v5pe' in exp_name: return exp_name.replace('v5pe', ''), 'v5pe' # v5p in europe-west4-b zone
   elif 'v5p' in exp_name: return exp_name.replace('v5p', ''), 'v5p'
+  elif 'v6e' in exp_name: return exp_name.replace('v6e', ''), 'v6e'
   elif 'v5' in exp_name: return exp_name.replace('v5', ''), 'v5'
   else: return exp_name, 'v3'
 
@@ -235,7 +236,7 @@ def append_zone(gs_path, tpu_type):
     f'common_datasets_{global_cfg.tputype2zone[tpu_type]}')
 
 def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
-  if tpu_type == 'v4':
+  if tpu_type in ['v4', 'v6e']:
     replica, data, mdl = experiment_config.ICI_MESH_SHAPE
     # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
     experiment_config.ICI_MESH_SHAPE = [replica, data, mdl // 2] \
@@ -246,7 +247,7 @@ def adjust_config_by_tpu(experiment_config, tpu_type):  # XD
     # assert mdl == 1, str(experiment_config.ICI_MESH_SHAPE)
     experiment_config.ICI_MESH_SHAPE = [replica, data // 4, mdl]
     experiment_config.PERCORE_BATCH_SIZE = experiment_config.PERCORE_BATCH_SIZE * 4
-  if tpu_type in ['v4', 'v5p', 'v5pe']:
+  if tpu_type in ['v4', 'v5p', 'v5pe', 'v6e']:
     if getattr(experiment_config, 'DATA_PATH', None) is not None:
       experiment_config.DATA_PATH = {split: append_zone(path, tpu_type)
         for split, path in experiment_config.DATA_PATH.items()}
@@ -279,7 +280,7 @@ def get_experiment(experiment_name: str) -> base_experiment.BaseExperimentT:
     global_cfg.GPT_SPM_PATH = append_zone(global_cfg.GPT_SPM_PATH, tpu_type)
     global_cfg.C4_TRAIN_DATADIR = append_zone(global_cfg.C4_TRAIN_DATADIR, tpu_type)
     global_cfg.C4_EVAL_DATADIR = append_zone(global_cfg.C4_EVAL_DATADIR, tpu_type)
-  if tpu_type in ['v4', 'v5', 'v5p', 'v5pe']:
+  if tpu_type in ['v4', 'v5', 'v5p', 'v5pe', 'v6e']:
     experiment_class = experiment_registry.get(experiment_name)
     if experiment_class is not None:
       return adjust_config_by_tpu(experiment_class, tpu_type)
@@ -322,6 +323,10 @@ def run_experiment(
   task_p = experiment_config.task()
   task_p = typing.cast(pax_fiddle.Config[tasks_lib.SingleTask], task_p)
 
+  FLAGS.tensorstore_use_ocdbt = getattr(experiment_config, 'TENSORSTORE_USE_OCDBT', False)
+  FLAGS.jax_fully_async_checkpoint = getattr(experiment_config, 'ASYNC_CHECKPOINT', False)
+  logging.info(f'FLAGS.tensorstore_use_ocdbt:{FLAGS.tensorstore_use_ocdbt}')
+  logging.info(f'FLAGS.jax_fully_async_checkpoint:{FLAGS.jax_fully_async_checkpoint}')
   if FLAGS.mode == 'train':
     work_unit.set_task_status(f'Train experiment {FLAGS.exp} at'
                               f' {job_log_dir}')

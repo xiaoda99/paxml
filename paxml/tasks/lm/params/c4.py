@@ -1212,7 +1212,7 @@ class MultiWayDynamicDenseConfig:
     task_p = super().task()
     task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
     return task_p
-  ## additional config
+  ## plus: additional config
   # DYNAMIC_DENSE_HIDDEN_ROUND = True
   # DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
   # HIDDEN_DIMS = [int(5504 * (i/23 +0.5)) for i in range(24)]  # num_layers=24, hid_dim=5504 0.5 -> 1.5
@@ -3344,6 +3344,12 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
 
 @experiment_registry.register
+class PileLlamaXLDebug(PileLlamaXL):
+  CHECKPOINT_EVERY_N_STEPS = 500
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+
+@experiment_registry.register
 class PileLlamaXLDynamicDenseQKVM(_DynamicDenseConfig, PileLlamaXL): # mqy
   CHECKPOINT_EVERY_N_STEPS = 1000
   DYNAMIC_DENSE_TYPE = 'qkvm'
@@ -3355,6 +3361,28 @@ class PileMUDDLlamaXL(MultiWayDynamicDenseConfig, PileLlamaXL):
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
 
 @experiment_registry.register
+class PileMUDDLlamaXLPlus(MultiWayDynamicDenseConfig, PileLlamaXL):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(5504 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusDebug(PileMUDDLlamaXLPlus):
+  CHECKPOINT_EVERY_N_STEPS = 500
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusNotRoundDynHidDim(MultiWayDynamicDenseConfig, PileLlamaXL):
+  DYNAMIC_DENSE_HIDDEN_ROUND = False
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(5504 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusNotRoundDynHidDimLastExpd64(PileMUDDLlamaXLPlusNotRoundDynHidDim):
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [64]
+
+@experiment_registry.register
 class PileMUDDLlamaXLVectorScaleKeywise(PileMUDDLlamaXL):
   DENSE_VECTOR_SCALE_KEYWISE = True
   DENSE_VECTOR_SCALE = True
@@ -3362,6 +3390,35 @@ class PileMUDDLlamaXLVectorScaleKeywise(PileMUDDLlamaXL):
 @experiment_registry.register
 class PileMUDDLlamaXLAdjustMLPDim(PileMUDDLlamaXL):
   HIDDEN_DIMS = [int(5504 * (i/23 +0.5)) for i in range(24)]  # num_layers=24, hid_dim=5504 0.5 -> 1.5
+
+# HIDDEN_DIMS = [round(5504 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHead(PileMUDDLlamaXL):
+  NUM_HEADS = [16] * 8 + [32] * 8 + [48] * 8
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHeadSoft(PileMUDDLlamaXL):
+  NUM_HEADS = [24] * 8 + [32] * 8 + [40] * 8
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHeadGradual(PileMUDDLlamaXL): 
+  NUM_HEADS = [round(32 * (i/23 +0.5)) for i in range(24)] # 0.5 -> 1.5
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHeadGradualSoft(PileMUDDLlamaXL):
+  NUM_HEADS = [round(32 * (i/23/2 +0.75)) for i in range(24)] # 0.75 -> 1.25
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHeadAdjustMLPDim(PileMUDDLlamaXLAdjustHead):
+  HIDDEN_DIMS = [int(5504 * (i/23 +0.5)) for i in range(24)]
+
+@experiment_registry.register
+class PileMUDDLlamaXLAdjustHeadAdjustMLPDimLastExpd64(PileMUDDLlamaXLAdjustHeadAdjustMLPDim):
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [64] 
 
 @experiment_registry.register
 class PileMUDDLlamaXLQVM(PileMUDDLlamaXL):
@@ -3639,6 +3696,12 @@ class PileGPTLarge(C4SpmdGPTSepEmb, PileLlamaLarge):
   HIDDEN_DIMS = 6144  # # v3 0.301
 
 @experiment_registry.register
+class PileMUDDLlamaLargePlus(MultiWayDynamicDenseConfig, PileLlamaLarge):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(4096 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
 class PileDCLlamaLarge(PileDataParams, _DCConfig, _LargeConfig, C4SpmdLlamaLarge, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
   DYNAMIC_SQUEEZE_RATIO = 12  # v4 0.206
   DYNAMIC_W_HIDDEN_DIM = 96
@@ -3683,6 +3746,19 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+# @experiment_registry.register
+# class PileLlamaMediumDebug(PileLlamaMedium):
+#   PERCORE_BATCH_SIZE = 8 // 4
+#   NUM_LAYERS = 1
+
+# @experiment_registry.register
+# class PileLlamaMediumDebug3(PileLlamaMediumDebug):
+#   SAVE_ON_STEPS = [100,300, 500, 700]
+#   CHECKPOINT_MAX_TO_KEEP = 2
+#   CHECKPOINT_EVERY_N_STEPS = 100
+#   TENSORSTORE_USE_OCDBT = True
+#   ASYNC_CHECKPOINT = True
 
 @experiment_registry.register
 class PileLlamaMediumIncrHidDimAcrossLayerSteep(PileLlamaMedium):
@@ -4165,6 +4241,12 @@ class PileMUDDPythiaMediumx6p7BToken(MultiWayDynamicDenseConfig, PilePythiaMediu
   CHECKPOINT_EVERY_N_STEPS = 500
 
 @experiment_registry.register
+class PileMUDDPythiaMediumx6p7BTokenPlus(PileMUDDPythiaMediumx6p7BToken):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(4096 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
 class PileMUDDPythiaMediumx6p7BTokenFixLastFixParallel(PileMUDDPythiaMediumx6p7BToken):
   DYNAMIC_DENSE_FIX_LAST_LAYER = True
   CHECKPOINT_EVERY_N_STEPS = 1000
@@ -4179,6 +4261,39 @@ class PileMUDDPythia3B(MultiWayDynamicDenseConfig, PilePythia3B128x1FixRot):
   QK_NORM = True
 
 @experiment_registry.register
+class PileMUDDPythia3BPlus(MultiWayDynamicDenseConfig, PilePythia3B128x1FixRot):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 31 + [4]
+  HIDDEN_DIMS = [round(10240 * (i/31 +0.5) / 128) * 128 for i in range(32)] 
+
+  CHECKPOINT_EVERY_N_STEPS = 500
+  SAVE_ON_STEPS = list(range(3000, 153000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
+  PERCORE_BATCH_SIZE = 4 # 4
+  ICI_MESH_SHAPE = [1, 256, 1] #  256 v5p-64
+  QK_NORM = True
+
+@experiment_registry.register
+class PileMUDDPythia3BPlusOcdbt(PileMUDDPythia3BPlus):
+  CHECKPOINT_EVERY_N_STEPS = 500
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+
+@experiment_registry.register
+class PileMUDDPythiaXLPlusOcdbt(MultiWayDynamicDenseConfig, PilePythiaXL128x1FixRot):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4] 
+  HIDDEN_DIMS = [round(8192 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+  SAVE_ON_STEPS = list(range(3000, 153000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
+  PERCORE_BATCH_SIZE = 8 # 
+  ICI_MESH_SHAPE = [1, 128, 1] #  
+  QK_NORM = True
+  CHECKPOINT_EVERY_N_STEPS = 500
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+
+@experiment_registry.register
 class PileMUDDLlama3B(MultiWayDynamicDenseConfig, PileDataParams, PythiaInit, _Llama3B):
   LEARNING_RATE = 3.2e-4
   
@@ -4190,11 +4305,59 @@ class PileMUDDLlama3B(MultiWayDynamicDenseConfig, PileDataParams, PythiaInit, _L
   SUMMARY_INTERVAL_STEPS = 10
 
   CHECKPOINT_EVERY_N_STEPS = 500
-  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+  SAVE_ON_STEPS = list(range(3000, 153000, 10000))
   CHECKPOINT_MAX_TO_KEEP = 2
   PERCORE_BATCH_SIZE = 4
   ICI_MESH_SHAPE = [1, 256, 1] 
   QK_NORM = True
+
+@experiment_registry.register
+class PileMUDDLlama3BPlus(PileMUDDLlama3B):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 31 + [4]
+  HIDDEN_DIMS = [round(6912 * (i/31 +0.5) / 128) * 128 for i in range(32)] 
+
+@experiment_registry.register
+class PileMUDDLlama3BPlusOcdbt(_CommonConfig, PileMUDDLlama3BPlus): 
+  CHECKPOINT_EVERY_N_STEPS = 100
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True 
+
+@experiment_registry.register
+class PileMUDDLlama3BPlusOcdbtCont(PileMUDDLlama3BPlusOcdbt): # continuously pretrain from PileMUDDLlama3BPlusUS ckpt11500 
+  CHECKPOINT_EVERY_N_STEPS = 500
+
+@experiment_registry.register
+class PileMUDDLlama3BPlusOcdbtDebug(PileMUDDLlama3BPlusOcdbt):
+  PERCORE_BATCH_SIZE = 4 # 0.320 on v6e-32
+  ICI_MESH_SHAPE = [1, 64, 1]
+  QUERY_CHUNK_SIZE = 128
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512
+
+@experiment_registry.register
+class PileLlama3BOcdbtDebug(PileDataParams, PythiaInit, _Llama3B):
+  QUERY_CHUNK_SIZE = 128
+  EMBEDDING_LOOKUP_STYLE = 'index'
+  LM_HEAD_CHUNK_SIZE = 512
+  PERCORE_BATCH_SIZE = 4 # 0.378 on v6e-32
+  ICI_MESH_SHAPE = [1, 64, 1]
+  CHECKPOINT_EVERY_N_STEPS = 100
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+  LEARNING_RATE = 3.2e-4
+  LR_COS_WARMUP = 1430
+  LR_COS_DECAY_START = LR_COS_WARMUP + 1
+  LR_COS_DECAY_END = 143000
+  LR_COS_MIN_RATIO = 0.01
+  SUMMARY_INTERVAL_STEPS = 10
+  SAVE_ON_STEPS = list(range(3000, 143000, 10000))
+  CHECKPOINT_MAX_TO_KEEP = 2
+  QK_NORM = True
+
+@experiment_registry.register
+class PileMUDDLlama3BPlusUS(PileMUDDLlama3BPlus): # train on tpu v5p-128 in us-east5 zone 
+  pass
 
 @experiment_registry.register
 class PileLlamaMediumDynamicDenseQKVMSepLn(PileLlamaMediumDynamicDenseQKVM): # dynamic dense qkvm baseline
@@ -4224,6 +4387,23 @@ class PileMUDDLlamaMedium(MultiWayDynamicDenseConfig, PileLlamaMedium): # muddll
   pass
 
 @experiment_registry.register
+class PileMUDDLlamaMediumPlus(PileMUDDLlamaMedium):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(2816 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusTest(PileMUDDLlamaMediumPlus):
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 8 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusOcdbt(PileMUDDLlamaMediumPlus):
+  TENSORSTORE_USE_OCDBT = True
+  ASYNC_CHECKPOINT = True
+  CHECKPOINT_EVERY_N_STEPS = 100
+
+@experiment_registry.register
 class PileMUDDLlamaMediumDynRes(PileMUDDLlamaMedium):
   DYNAMIC_DENSE_PARAM_RESIDUAL = True
 
@@ -4234,6 +4414,21 @@ class PileMUDDLlamaMediumQKNorm(PileMUDDLlamaMedium):
 @experiment_registry.register
 class PileMUDDLlamaMediumAdjustHead(PileMUDDLlamaMedium):
   NUM_HEADS = [8] * 8 + [16] * 8 + [24] * 8
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaMediumAdjustHeadRoundDynHidDim(PileMUDDLlamaMediumAdjustHead):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+
+@experiment_registry.register
+class PileMUDDLlamaMediumAdjustHeadReversed(PileMUDDLlamaMedium):
+  NUM_HEADS = [24] * 8 + [16] * 8 + [8] * 8
+  DIMS_PER_HEAD = 64
+
+@experiment_registry.register
+class PileMUDDLlamaMediumAdjustHeadCycle(PileMUDDLlamaMedium):
+  NUM_HEADS = [8, 16, 24] * 8
   DIMS_PER_HEAD = 64
 
 @experiment_registry.register
@@ -4252,6 +4447,18 @@ class PileMUDDLlamaMediumVectorScaleKeyWise(PileMUDDLlamaMediumVectorScale):
 @experiment_registry.register
 class PileMUDDLlamaMediumIncrHidDimAcrossLayer(PileMUDDLlamaMedium):
   HIDDEN_DIMS = [int(2816 * (i/23 +0.5)) for i in range(24)]  # 0.5 -> 1.5
+
+@experiment_registry.register
+class PileMUDDLlamaMediumIncrHidDimAcrossLayerStage(PileMUDDLlamaMedium):
+  HIDDEN_DIMS = [int(2816*0.5)] * 8 + [2816] * 8 + [int(2816*1.5)] * 8   # 0.5 -> 1.5
+
+@experiment_registry.register
+class PileMUDDLlamaMediumIncrHidDimAcrossLayerSoft(PileMUDDLlamaMedium):
+  HIDDEN_DIMS = [int(2816 * (i/23/2 +0.75)) for i in range(24)]  # 0.75 -> 1.25
+
+@experiment_registry.register
+class PileMUDDLlamaMediumIncrHidDimAcrossLayerCycle(PileMUDDLlamaMedium):
+  HIDDEN_DIMS = [int(2816 * i) for i in [0.5, 1, 1.5]] * 8  # 0.5 -> 1.5
 
 @experiment_registry.register
 class PileMUDDLlamaMediumIncrHidDimAcrossLayerAdjustHead(PileMUDDLlamaMediumIncrHidDimAcrossLayer):
@@ -6057,12 +6264,27 @@ class PileLlamaSmall(PileDataParams, _SmallConfig, C4SpmdLlamaSmall):
   pass  # v3 1.43; stepsx4 v3 4.75
 
 @experiment_registry.register
+class PileMUDDLlamaSmallPlus(MultiWayDynamicDenseConfig, PileLlamaSmall):
+  LEARNING_RATE = 6e-4
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 11 + [4]
+  HIDDEN_DIMS = [round(2048 * (i/11 +0.5) / 128) * 128 for i in range(12)] 
+
+@experiment_registry.register
 class PileLlamaSmallLR0006(PileDataParams, _SmallConfig, C4SpmdLlamaSmall):
   LEARNING_RATE = 6e-4  # stepsx4 3e-r -> 6e-4
 
 @experiment_registry.register
+class PileLlamaSmallLR0006Rerun(PileLlamaSmallLR0006):
+  pass
+
+@experiment_registry.register
 class PileGPTSmall(C4SpmdGPTSepEmb, PileLlamaSmall):
   HIDDEN_DIMS = 3072  # v3 1.46; stepsx4 v3 4.84
+
+@experiment_registry.register
+class PileGPTSmallLR0006(PileGPTSmall):
+  LEARNING_RATE = 6e-4
 
 @experiment_registry.register
 class PileDCLlamaSmall(PileDataParams, _DCConfig, _SmallConfig, C4SpmdLlamaSmall, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
@@ -7072,6 +7294,70 @@ class PileLlamaXLPileEvalReRun(PileEval,PileLlamaXL):
   RESET_FOR_EVAL = False
   ICI_MESH_SHAPE = [1, 8, 1]
   PERCORE_BATCH_SIZE = 32 * 4
+
+@experiment_registry.register
+class PileMUDDPythiaXLPlusOcdbtPileEval(PileEval,PileMUDDPythiaXLPlusOcdbt): 
+  TASK_NAME='PileMUDDPythiaXLPlusOcdbtPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 32 * 2, 1]
+  PERCORE_BATCH_SIZE = 16
+
+@experiment_registry.register
+class PileGPTSmallLR0006PileEval(PileEval, PileGPTSmallLR0006): # gpt small
+  TASK_NAME='PileGPTSmallLR0006PileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 8 * 4, 1]
+  PERCORE_BATCH_SIZE = 32 
+
+@experiment_registry.register
+class PileLlamaSmallLR0006RerunPileEval(PileEval, PileLlamaSmallLR0006Rerun): # llama small
+  TASK_NAME='PileLlamaSmallLR0006RerunPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 8 * 4, 1]
+  PERCORE_BATCH_SIZE = 32 
+
+@experiment_registry.register
+class PileMUDDLlamaSmallPlusPileEval(PileEval, PileMUDDLlamaSmallPlus): # muddllama small
+  TASK_NAME='PileMUDDLlamaSmallPlusPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 8 * 4, 1]
+  PERCORE_BATCH_SIZE = 32 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPileEval(PileEval, PileMUDDLlamaMediumPlus):
+  TASK_NAME='PileMUDDLlamaMediumPlusPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PileMUDDLlamaLargePlusPileEval(PileEval, PileMUDDLlamaLargePlus):
+  TASK_NAME='PileMUDDLlamaLargePlusPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusPileEval(PileEval, PileMUDDLlamaXLPlus):
+  TASK_NAME='PileMUDDLlamaXLPlusPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PileMUDDPythia3BPlusOcdbtPileEval(PileEval,PileMUDDPythia3BPlusOcdbt):
+  TASK_NAME='PileMUDDPythia3BPlusOcdbtPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 64, 1]
+  PERCORE_BATCH_SIZE = 16
 
 @experiment_registry.register
 class PileMUDDLlamaXLPileEval(PileEval,PileMUDDLlamaXL): 

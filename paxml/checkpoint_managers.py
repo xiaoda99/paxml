@@ -18,7 +18,7 @@
 import dataclasses
 import os
 import typing
-from typing import Any, Mapping, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union, List
 from multiprocessing import Process
 
 from absl import logging
@@ -213,16 +213,26 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
               self._version,
           )
           self._version = version
+    logging.info(f'checkpoint_type: {self._checkpoint_type}')
+
+    if orbax.checkpoint.__version__ > '0.2.6':
+      kwargs['options'].step_prefix = checkpoint_paths.checkpoint_prefix(
+        self._checkpoint_type
+      )
+      kwargs['options'].step_format_fixed_length = (
+          checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
+      )
 
     super().__init__(directory, *args, **kwargs)
     # Set to 1 if not provided or set to 0.
     self._options.save_interval_steps = self._options.save_interval_steps or 1
-    self._options.step_prefix = checkpoint_paths.checkpoint_prefix(
-        self._checkpoint_type
-    )
-    self._options.step_format_fixed_length = (
-        checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
-    )
+    if orbax.checkpoint.__version__ <= '0.2.6':
+      self._options.step_prefix = checkpoint_paths.checkpoint_prefix(
+          self._checkpoint_type
+      )
+      self._options.step_format_fixed_length = (
+          checkpoint_paths.checkpoint_name_fixed_length(self._checkpoint_type)
+      )
 
   @property
   def version(self) -> float:
@@ -273,9 +283,12 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
     # Whether to save an on-demand checkpoint due to preemption
     if self.reached_preemption(step):
       return True
-    last_checkpoint_step = (
-        self._last_checkpoint.step if self._last_checkpoint else None
-    )
+    if orbax.checkpoint.__version__ > '0.2.6':
+      last_checkpoint_step = self.latest_step()
+    else:
+      last_checkpoint_step = (
+          self._last_checkpoint.step if self._last_checkpoint else None
+      )
     # Ensure current step is between the last step and next step (accounting for
     # save interval). The `last_checkpoint_step` may not be initialized, in
     # which case we should save. Otherwise, step must fall on the specified
@@ -295,6 +308,122 @@ class _CheckpointManagerImpl(orbax.checkpoint.CheckpointManager):
           'Checkpoints with digit step subdirectories do not support deletions.'
       )
     super().delete(step)
+
+  def _get_old_steps_to_remove(self) -> List[int]: # mqy: fix save_on_steps for orbax-checkpoint==0.5.20
+    """Returns checkpoints that should be deleted."""
+    # Must have set max_to_keep in order to remove any checkpoints.
+    if self._options.max_to_keep is None:
+      return []
+    # Not enough checkpoints accumulated to consider deletion.
+    if len(self._checkpoints) <= self._options.max_to_keep:
+      return []
+
+    # This isn't a duration but there isn't a general counter that we can use so
+    # we abuse a duration metric to count the number of steps examined.
+    jax.monitoring.record_event_duration_secs(
+        '/jax/checkpoint/write/old_steps_examined_count',
+        len(self._checkpoints),
+    )
+
+    # Exclude the latest checkpoint, since it is not finalized.
+    are_locked = utils.are_locked(
+        self.directory,
+        steps=tuple([info.step for info in self._checkpoints[:-1]]),
+        step_name_format=self._step_name_format,
+    )
+    self._checkpoints[:-1] = [
+        dataclasses.replace(info, is_locked=is_locked)
+        for info, is_locked in zip(self._checkpoints[:-1], are_locked)
+    ]
+
+    if self._track_best:
+      # Best steps (to keep) are at the end, after sorting.
+      (
+          checkpoints_without_metrics,
+          sorted_checkpoints,
+      ) = self._sort_checkpoints_by_metrics(self._checkpoints)
+    else:
+      # checkpoints already sorted by ascending step
+      checkpoints_without_metrics = []
+      sorted_checkpoints = self._checkpoints
+
+    keep = int(self._options.max_to_keep)
+    if self._options.keep_checkpoints_without_metrics:
+      maybe_delete = (
+          sorted_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      )
+      active_checkpoints = set(
+          checkpoints_without_metrics
+          + (sorted_checkpoints[-keep:] if keep > 0 else [])
+      )
+    else:
+      all_checkpoints = checkpoints_without_metrics + sorted_checkpoints
+      maybe_delete = all_checkpoints[:-keep] if keep > 0 else sorted_checkpoints
+      active_checkpoints = set(all_checkpoints[-keep:] if keep > 0 else [])
+
+    interval_preserved_checkpoints = self._get_interval_preserved_checkpoints(
+        self._checkpoints
+    )
+    kept_checkpoints = set()
+    for info in maybe_delete:
+      if info.step in self._options.save_on_steps: # mqy
+        logging.info(
+            'Preserving %s: (Reason: checkpoint is among save_on_steps).',
+            info,
+        )
+        kept_checkpoints.add(info)
+        continue
+      if info.is_locked:
+        logging.info(
+            'Preserving %s: (Reason: checkpoint is locked).',
+            info,
+        )
+        kept_checkpoints.add(info)
+        continue
+      if (
+          self._options.keep_time_interval is not None
+          and interval_preserved_checkpoints
+      ):
+        if info in interval_preserved_checkpoints:
+          logging.info(
+              'Preserving %s: (Reason: older falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.add(info)
+          continue
+        elif info.time >= (
+            interval_preserved_checkpoints[-1].time
+            + self._options.keep_time_interval
+        ):
+          interval_preserved_checkpoints.append(info)
+          logging.info(
+              'Preserving %s: (Reason: latest falling on keep_time_interval).',
+              info,
+          )
+          kept_checkpoints.add(info)
+          continue
+      if (
+          self._options.keep_period is not None
+          and info.step % self._options.keep_period == 0
+      ):
+        logging.info(
+            'Preserving %s: (Reason: on keep_period=%s).',
+            info,
+            self._options.keep_period,
+        )
+        kept_checkpoints.add(info)
+        continue
+
+    kept_checkpoints.update(active_checkpoints)
+
+    steps_to_remove = []
+    for info in self._checkpoints:
+      if info not in kept_checkpoints:
+        reason = 'worse metric' if self._track_best else 'old checkpoint'
+        logging.info('Deleting %s: (Reason: %s).', info, reason)
+        steps_to_remove.append(info.step)
+    return steps_to_remove
+
 
   def _remove_old_checkpoints(self):  # XD: copied from orbax/checkpoint/checkpoint_manager.py:795 (CheckpointManager)
     """Keeps the `max_to_keep` most recent checkpoint steps."""

@@ -1,4 +1,4 @@
-tputype2zone = {'v4': 'us-central2', 'v5': 'us-west4', 'v5p': 'us-east5', 'v5pe': 'europe-west4'}
+tputype2zone = {'v4': 'us-central2', 'v5': 'us-west4', 'v5p': 'us-east5', 'v5pe': 'europe-west4', 'v6e': 'europe-west4'}
 
 GPT_SPM_PATH = (
     'gs://common_datasets/vocab/c4_en_301_5Mexp_spm.model'  # XD

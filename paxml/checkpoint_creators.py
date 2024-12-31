@@ -280,6 +280,7 @@ class _OrbaxPjitTrainingCheckpointer(checkpoints.TrainingCheckpointer):
   ) -> Tuple[TrainState, Optional[TrainStateProvenance], int, PRNGKey]:
 
     logging.info(f"step_to_restore: {self._step_to_restore} return_opt: {return_opt}")
+    if orbax.checkpoint.__version__ > '0.2.6': return_opt = True # TODO: load params only for eval
     if not return_opt:
         if self._step_to_restore is None:
                 raise ValueError('When return_opt is True, Restore model have not been None!!!')
@@ -594,17 +595,25 @@ def _create_checkpointer(
   keep_interval_timedelta = _parse_duration(train_p.save_keep_interval_duration)
   restore_transformations = train_p.restore_transformations
 
-  ocdbt_coordinator_server = checkpoints.reregister_type_handlers(
-      tensorstore_metadata_key=train_p.tensorstore_metadata_key,
-      tensorstore_use_ocdbt=tensorstore_use_ocdbt,
-  )
+  if orbax.checkpoint.__version__ <= '0.2.6':
+    ocdbt_coordinator_server = checkpoints.reregister_type_handlers(
+        tensorstore_metadata_key=train_p.tensorstore_metadata_key,
+        tensorstore_use_ocdbt=tensorstore_use_ocdbt,
+    )
+    async_kwargs = {}
+  else:
+    ocdbt_coordinator_server = None
+    async_kwargs={'enable_async_checkpointing': enable_async_checkpointing}
+
   options = checkpoint_managers.CheckpointManagerOptions(
       save_on_steps=train_p.save_on_steps,  # XD
       max_to_keep=max_to_keep,
       save_interval_steps=save_interval_steps,
       keep_time_interval=keep_interval_timedelta,
       todelete_subdir=todelete_subdir,
+      # enable_async_checkpointing=enable_async_checkpointing, # mqy
       cleanup_tmp_directories=not getattr(train_input_p, 'only_eval', False),  # XD
+      **async_kwargs,
   )
 
   if checkpoint_type == CheckpointType.FLAX:
@@ -617,7 +626,7 @@ def _create_checkpointer(
       )
     else:
       checkpointer = FlaxCheckpointer(FlaxCheckpointHandler())
-  elif enable_async_checkpointing:
+  elif orbax.checkpoint.__version__ <= '0.2.6' and enable_async_checkpointing: 
     if maybe_use_persistence_checkpointing:
       raise NotImplementedError('Persistence checkpointer not supported.')
     else:
@@ -656,6 +665,7 @@ def _create_checkpointer(
 
   if task_p.train.enable_input_checkpointing:
     train_input_p.input_checkpointing_enabled = True
+  logging.info(f'checkpointer:{type(checkpointer)}, {str(checkpointer)}, {isinstance(checkpointer,checkpoints.AsyncCheckpointer)}')
   checkpoint_manager = checkpoint_managers.OrbaxCheckpointManager(
       checkpoint_dir,
       checkpointer,
