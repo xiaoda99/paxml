@@ -4404,9 +4404,41 @@ class PileMUDDLlamaMediumPlusOcdbt(PileMUDDLlamaMediumPlus):
   CHECKPOINT_EVERY_N_STEPS = 100
 
 @experiment_registry.register  # XD
-class PileMUDDLlamaMediumPlusGenPatternQKVM(PileMUDDLlamaMediumPlus):
+class PileLlamaMediumPBS(PileLlamaMedium):
+  # PERCORE_BATCH_SIZE = 32  # 0.212 * 32 = 6.784
+  # PERCORE_BATCH_SIZE = 36  # 0.188 * 36 = 6.768
+  # PERCORE_BATCH_SIZE = 40  # 0.170 * 40 = 6.8
+  PERCORE_BATCH_SIZE = 48  # 0.130 * 48 = 6.24
+  # PERCORE_BATCH_SIZE = 52  # oom 
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusPBS(PileMUDDLlamaMediumPlus):
+  # PERCORE_BATCH_SIZE = 20  # 0.262 * 20 = 5.24
+  # PERCORE_BATCH_SIZE = 24  # 0.217 * 24 = 5.208
+  PERCORE_BATCH_SIZE = 28  # oom 
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusGenPatternQ_K_V_M(PileMUDDLlamaMediumPlus):  # 0.647
+  DDENSE_W_GEN_PATTERN = 'q,k,v,m'
+  DDENSE_W_GEN_CHUNK_SIZE = 2048
+  # PERCORE_BATCH_SIZE = 16  # 0.327
+  PERCORE_BATCH_SIZE = 20  # 0.262 
+  # PERCORE_BATCH_SIZE = 24  # oom
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusGenPatternQKVM(PileMUDDLlamaMediumPlus):  # 0.59
   DDENSE_W_GEN_PATTERN = 'qkvm'
   DDENSE_W_GEN_CHUNK_SIZE = 2048
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusGenPatternQK_VM(PileMUDDLlamaMediumPlus):  # 0.64, loss does not decrease!?
+  DDENSE_W_GEN_PATTERN = 'qk,vm'
+  DDENSE_W_GEN_CHUNK_SIZE = 2048
+
+@experiment_registry.register  # XD
+class PileMUDDLlamaMediumPlusGenPatternQKVMChunk512(PileMUDDLlamaMediumPlus):  # 0.36
+  DDENSE_W_GEN_PATTERN = 'qkvm'
+  DDENSE_W_GEN_CHUNK_SIZE = 512
 
 @experiment_registry.register
 class PileMUDDLlamaMediumDynRes(PileMUDDLlamaMedium):
