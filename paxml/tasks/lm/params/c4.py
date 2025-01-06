@@ -20,6 +20,8 @@ import math
 from typing import Dict, List, Optional
 import numpy as np
 import operator  # XD
+from copy import deepcopy
+
 
 from absl import logging
 import fiddle as fdl
@@ -30,6 +32,7 @@ from paxml import base_experiment
 from paxml import experiment_registry
 from paxml import seqio_input
 from paxml import tasks_lib
+from paxml import learners 
 from paxml import trainer_lib
 from paxml.tasks.lm import model_params
 # from paxml.tasks.lm.params import lm_cloud  # XD
@@ -704,14 +707,14 @@ def configure_gpt3_task(
     
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
-                 'hyper_conn', 'hyper_conn_n', 'hyper_conn_tanh', 'hyper_conn_merge_wcdc',
+                 'hyper_conn', 'hyper_conn_n', 'hyper_conn_tanh', 'hyper_conn_merge_wcdc', 'hyper_conn_attn', 'hyper_conn_efficient',
                  'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dense_vector_scale', 'dense_vector_scale_keywise', 'dynamic_dense_share_qk_way',
                  'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_round', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp',
                 'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'dynamic_dense_k_from_res', 'dynamic_dense_keep_residual', 'dynamic_dense_by_group_heads', 'dynamic_dense_param_residual', 'use_dense_norm', 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
-                'mamba_lidxs', 'use_mamba']: # mqy
+                'mamba_lidxs', 'use_mamba', 'mamba_use_minimal']: # mqy
       NAME = name.upper() 
       if prefix == 'early_' and hasattr(cls, NAME + '_EARLY'):
         NAME = NAME + '_EARLY'
@@ -1277,6 +1280,7 @@ class _DynamicDenseConfig:
   DYNAMIC_DENSE_ACT_CLS = layers.GELU 
   USE_DENSE_NORM = True
   VARIABLE_NORM_SUMMARY = False 
+  CHECKPOINT_EVERY_N_STEPS = 1000
   def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
     """Returns the task parameters."""
     task_p = super().task()
@@ -3344,6 +3348,23 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
 
 @experiment_registry.register
+class PileLlamaXLHyperConnAttn(PileLlamaXL):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  HYPER_CONN = True
+  HYPER_CONN_N = 4
+  OUTPUT_LAYER_INIT_METHOD = 'hyper_conn_init'
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  HYPER_CONN_ATTN = True
+  VARIABLE_NORM_SUMMARY = False
+  HYPER_CONN_EFFICIENT = True
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
 class PileLlamaXLDebug(PileLlamaXL):
   CHECKPOINT_EVERY_N_STEPS = 500
   TENSORSTORE_USE_OCDBT = True
@@ -3782,6 +3803,21 @@ class PileLlamaMediumHyperConn(PileLlamaMedium):
   CHECKPOINT_EVERY_N_STEPS = 1000
 
 @experiment_registry.register
+class PileLlamaMediumHyperConnAttn(PileLlamaMediumHyperConn):
+  HYPER_CONN_ATTN = True
+  VARIABLE_NORM_SUMMARY = False
+
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
+class PileLlamaMediumHyperConnAttnFastDebug(PileLlamaMediumHyperConnAttn):
+  HYPER_CONN_EFFICIENT = True
+
+@experiment_registry.register
 class PileLlamaMediumHyperConnTanh(PileLlamaMediumHyperConn): # SepWCDC, SumHid, NoSumEmb
   HYPER_CONN_TANH = True
 
@@ -3819,7 +3855,7 @@ class PileLlamaMediumWSD27k(PileLlamaMedium):
   LR_COS_DECAY_START = int(LR_COS_DECAY_END * 0.9) # 10% decay steps
 
 @experiment_registry.register
-class PileMambaMediumDebug6(PileLlamaMedium):
+class PileMambaMedium(PileLlamaMedium):
   REMAT = True # v4: 0.24
   USE_REPEATED_LAYER = False
   USE_MAMBA = True
@@ -3832,6 +3868,26 @@ class PileMambaMediumDebug6(PileLlamaMedium):
     task_p = super().task()
     task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
     return task_p
+
+@experiment_registry.register
+class PileMambaMediumHighLr(PileMambaMedium):
+  FPROP_DTYPE = jnp.float32
+  LR_COS_MIN_RATIO = 1e-5 / (5 * 3e-4)
+  LEARNING_RATE = 5 * 3e-4 
+
+@experiment_registry.register
+class PileMambaMediumHighLrBF16(PileMambaMedium):
+  LR_COS_MIN_RATIO = 1e-5 / (5 * 3e-4)
+  LEARNING_RATE = 5 * 3e-4 
+
+@experiment_registry.register
+class PileMambaMediumHighLrBF16MinimalFalse(PileMambaMediumHighLrBF16):
+  MAMBA_USE_MINIMAL = False
+
+@experiment_registry.register
+class PileLlamaMediumHighLr(PileLlamaMedium):
+  LR_COS_MIN_RATIO = 1e-5 / (5 * 3e-4)
+  LEARNING_RATE = 5 * 3e-4 
 
 @experiment_registry.register
 class PileLlamaMediumOgateSigmoidXD(PileLlamaMedium): # mqy
@@ -4182,6 +4238,20 @@ class PileLlamaMediumDense1x1DynamicGeluDenseNorm(PileLlamaMediumDense1x1Dynamic
   USE_DENSE_NORM = True
 
 @experiment_registry.register
+class PileLlamaMediumDynamicDenseAttnOut(_DynamicDenseConfig, PileLlamaMedium):
+  DENSE_CONN_ON_ATTN = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseRerun(_DynamicDenseConfig, PileLlamaMedium):
+  pass
+
+@experiment_registry.register
+class PileLlamaMediumDynamicDenseAttnOutPlus(PileLlamaMediumDynamicDenseAttnOut):
+  DYNAMIC_DENSE_HIDDEN_ROUND = True
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
+  HIDDEN_DIMS = [round(2816 * (i/23 +0.5) / 128) * 128 for i in range(24)]
+
+@experiment_registry.register
 class PileLlamaMediumDynamicDenseDebug(_DynamicDenseConfig, PileLlamaMedium):
   # NUM_LAYERS = 24 # v4: 0.487
   DYNAMIC_DENSE_TYPE = 'qkvm'
@@ -4391,6 +4461,30 @@ class PileMUDDLlamaMediumPlus(PileMUDDLlamaMedium):
   DYNAMIC_DENSE_HIDDEN_ROUND = True
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
   HIDDEN_DIMS = [round(2816 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusDynDenseLrHalf(PileMUDDLlamaMediumPlus):
+  DENSE_LR_RATIO = 0.5
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    opt_main = task_p.train.learner.optimizer  # raw optimizer
+    learner_p = pax_fiddle.Config(learners.MultiOptimizerLearner)
+    learner_p.name = 'multi_opt_learner'
+    learner_p.loss_name = 'total_loss'
+    learner_p.optimizer = deepcopy(opt_main)
+    aux_p1 = deepcopy(opt_main)
+    aux_p1.lr_schedule.max = getattr(self, 'DENSE_LR_RATIO', 1) * aux_p1.lr_schedule.max
+
+    learner_p.auxiliary_optimizers = [aux_p1]
+    learner_p.auxiliary_regex = ['.*dense_conn.*']
+    learner_p.auxiliary_names = ['DynamicDense']
+    task_p.train.learner = learner_p
+    return task_p 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusDynDenseLrTenth(PileMUDDLlamaMediumPlusDynDenseLrHalf):
+   DENSE_LR_RATIO = 0.1
 
 @experiment_registry.register
 class PileMUDDLlamaMediumPlusTest(PileMUDDLlamaMediumPlus):
@@ -7354,6 +7448,14 @@ class PileMUDDLlamaXLPlusPileEval(PileEval, PileMUDDLlamaXLPlus):
 @experiment_registry.register
 class PileMUDDPythia3BPlusOcdbtPileEval(PileEval,PileMUDDPythia3BPlusOcdbt):
   TASK_NAME='PileMUDDPythia3BPlusOcdbtPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 64, 1]
+  PERCORE_BATCH_SIZE = 16
+
+@experiment_registry.register
+class PileMUDDLlama3BPlusOcdbtContPileEval(PileEval,PileMUDDLlama3BPlusOcdbtCont):
+  TASK_NAME='PileMUDDLlama3BPlusOcdbtContPileEval' 
   EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
   RESET_FOR_EVAL = False
   ICI_MESH_SHAPE = [1, 64, 1]
