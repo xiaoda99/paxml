@@ -711,7 +711,7 @@ def configure_gpt3_task(
                  'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dense_vector_scale', 'dense_vector_scale_keywise', 'dynamic_dense_share_qk_way',
                  'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_round', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
-                'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp', 'dynamic_dense_add_residual',
+                'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp', 'dynamic_dense_add_residual', 'dynamic_dense_prenormed_residual_qkv',
                 'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'dynamic_dense_k_from_res', 'dynamic_dense_keep_residual', 'dynamic_dense_by_group_heads', 'dynamic_dense_param_residual',
                 'use_dense_norm', 'use_dense_pre_norm', 'use_dense_post_norm', 'dense_post_norm_all', 'dense_post_norm_scale', 'dynamic_dense_w2_init', 'dynamic_dense_scale_dw', 'dynamic_dense_scale_dw_squared', 'dynamic_dense_q_norm', 'dynamic_dense_hyper_tanh', 'dynamic_dense_hyper_tanh_res',
                 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
@@ -3431,7 +3431,12 @@ class PileMUDDLlamaXLPlusHigh(PileMUDDLlamaXLPlus):
 
 @experiment_registry.register
 class PileMUDDLlamaXLPlusHighPrePostNorm(DensePrePostNorm, PileMUDDLlamaXLPlusHigh):
-  pass
+  VARIABLE_NORM_SUMMARY = False
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusHighPrePostNormQKVResNormed(DensePrePostNorm, PileMUDDLlamaXLPlusHigh):
+  DYNAMIC_DENSE_PRENORMED_RESIDUAL_QKV = True
+  VARIABLE_NORM_SUMMARY = False
 
 @experiment_registry.register
 class PileMUDDLlamaXLPlusDebug(PileMUDDLlamaXLPlus):
@@ -3763,6 +3768,22 @@ class PileGPTLarge(C4SpmdGPTSepEmb, PileLlamaLarge):
   HIDDEN_DIMS = 6144  # # v3 0.301
 
 @experiment_registry.register
+class PileLlamaLargeDynamicDense(PileLlamaLarge):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+  DENSE_CONN = True
+  DYNAMIC_DENSE = True
+  DYNAMIC_DENSE_ACT_CLS = layers.GELU 
+  USE_DENSE_NORM = True
+  CHECKPOINT_EVERY_N_STEPS = 1000
+  VARIABLE_NORM_SUMMARY = False 
+  def task(self) -> pax_fiddle.Config[tasks_lib.SingleTask]:
+    """Returns the task parameters."""
+    task_p = super().task()
+    task_p.train.variable_norm_summary = getattr(self, 'VARIABLE_NORM_SUMMARY', True)
+    return task_p
+
+@experiment_registry.register
 class PileMUDDLlamaLargePlus(MultiWayDynamicDenseConfig, PileLlamaLarge):
   DYNAMIC_DENSE_HIDDEN_ROUND = True
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
@@ -3779,7 +3800,12 @@ class PileMUDDLlamaLargePlusHigh(PileMUDDLlamaLargePlus):
 
 @experiment_registry.register
 class PileMUDDLlamaLargePlusHighPrePostNorm(DensePrePostNorm, PileMUDDLlamaLargePlusHigh):
-  pass
+  VARIABLE_NORM_SUMMARY = False
+
+@experiment_registry.register
+class PileMUDDLlamaLargePlusHighPrePostNormQKVResNormed(DensePrePostNorm, PileMUDDLlamaLargePlusHigh):
+  DYNAMIC_DENSE_PRENORMED_RESIDUAL_QKV = True
+  VARIABLE_NORM_SUMMARY = False
 
 @experiment_registry.register
 class PileLlamaLargeDenseFormer(PileLlamaLarge):
@@ -4260,6 +4286,10 @@ class PileLlamaMediumDense1x1(PileLlamaMedium): #mqy
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaMediumDense1x1Debug2(PileLlamaMediumDense1x1): #mqy
+  pass
+
+@experiment_registry.register
 class PileLlamaMediumDense1x1Reproduce(PileLlamaMediumDense1x1): # reproduce on v4-32
   pass
 
@@ -4609,6 +4639,10 @@ class PileMUDDLlamaMediumPlusPrePostNorm(PileMUDDLlamaMediumPlus):
   DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
   USE_DENSE_POST_NORM = True
   DENSE_POST_NORM_SCALE = 0.001
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormQKVResNormed(PileMUDDLlamaMediumPlusPrePostNorm):
+  DYNAMIC_DENSE_PRENORMED_RESIDUAL_QKV = True
 
 @experiment_registry.register
 class PileMUDDLlamaMediumPlusTall(PileMUDDLlamaMediumPlus):
