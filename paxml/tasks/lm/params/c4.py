@@ -771,6 +771,10 @@ def configure_gpt3_task(
     if hasattr(cls, 'RESIDUAL_CROSS_ACT_PROJ'):  # XD
       transformer_layer_p.tr_fflayer_tpl.residual_cross_act_proj = cls.RESIDUAL_CROSS_ACT_PROJ
     # XD
+    for name in ['dynamic_head_dense_use_bias', 'squash_dyn_dense_w', 'squash_scale_init', 'squash_scale_by_layer', 'squash_scale_init_by_layer']:
+      NAME = name.upper()
+      if hasattr(cls, NAME):
+        setattr(transformer_layer_p, name, getattr(cls, NAME))
     for name in ['num_groups', 'project_logits', 'project_probs', 
                 'logits_residual', 'probs_residual', 'logits_absorb_residual', 'probs_absorb_residual',
                 'logits_squeeze_ratio', 'logits_squeeze_activation_cls', 'logits_output_activation_cls',
@@ -781,7 +785,7 @@ def configure_gpt3_task(
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
                 'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 
-                'scale_v', 'save_v_out','dynamic_qk_proj', 'compose_mode', 'compose_residual', 'compose_inner_norm',
+                'scale_v', 'save_v_out','dynamic_qk_proj', 'dynamic_qkv_rotate', 'v_out_rotate', 'compose_mode', 'compose_residual', 'compose_inner_norm',
                 'dynamic_position', 'dynamic_position_activation_cls', 'dynamic_position_bias', 'dynamic_position_scale',
                 'rotary_position_emb_base', 'dynamic_position_act_bias', 'dynamic_position_bias_learnable', 'dynamic_position_mlp'
                 ]:
@@ -4047,6 +4051,57 @@ class PileLlamaMediumDynamicHeadDense(PileLlamaMedium): # dynamic head dense bas
     return task_p
 
 @experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseQKV(PileLlamaMediumDynamicHeadDense):  # XD: 0.559
+  DYNAMIC_HEAD_DENSE_TYPE = 'qkv'
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseQKVRotate(PileLlamaMediumDynamicHeadDenseQKV):  # XD: 0.533
+  DYNAMIC_QKV_ROTATE = True
+  V_OUT_ROTATE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseQKVRotateUseBias(PileLlamaMediumDynamicHeadDenseQKVRotate):  # XD: 0.521
+  DYNAMIC_HEAD_DENSE_USE_BIAS = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotate(PileLlamaMediumDynamicHeadDense):  # XD: 0.510
+  DYNAMIC_QKV_ROTATE = True
+  V_OUT_ROTATE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateUseBias(PileLlamaMediumDynamicHeadDenseRotate):  # XD: 0.501
+  DYNAMIC_HEAD_DENSE_USE_BIAS = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseUseBias(PileLlamaMediumDynamicHeadDense):  # XD: 0.520
+  DYNAMIC_HEAD_DENSE_USE_BIAS = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateFixVoutRotate(PileLlamaMediumDynamicHeadDense):  # XD: 0.513
+  DYNAMIC_QKV_ROTATE = True
+  V_OUT_ROTATE = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateUseBiasFixWD(PileLlamaMediumDynamicHeadDenseRotate):  # XD
+  DYNAMIC_HEAD_DENSE_USE_BIAS = True  # vs PileLlamaMediumDynamicHeadDenseRotateFixVoutRotate
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateUseBiasDW1Norm(PileLlamaMediumDynamicHeadDenseRotateUseBiasFixWD):  # XD
+  HEAD_DW1_NORM_ON_ACTIVATION = False  # loss does not decrease
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseUseBiasFixWD(PileLlamaMediumDynamicHeadDense):  # XD
+  DYNAMIC_HEAD_DENSE_USE_BIAS = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateUseBiasVoutRotGaussianInit(PileLlamaMediumDynamicHeadDenseRotateUseBiasFixWD): pass # XD
+
+@experiment_registry.register
+class PileLlamaMediumDynamicHeadDenseRotateUseBiasDW1NormFix(PileLlamaMediumDynamicHeadDenseRotateUseBiasFixWD):  # XD
+  HEAD_DW1_NORM_ON_ACTIVATION = False  # loss does not decrease either
+  # VoutRotGaussianInit
+
+@experiment_registry.register
 class PileLlamaMediumDynamicHeadDenseDebug(PileLlamaMediumDynamicHeadDense):  # mqy
   # llama baseline: 0.817, dynamic dense: 0.72, dynamic head dense: 0.52
   # previous_v_out -> q :  0.769
@@ -4410,6 +4465,47 @@ class PileLlamaMediumPBS(PileLlamaMedium):
   # PERCORE_BATCH_SIZE = 40  # 0.170 * 40 = 6.8
   PERCORE_BATCH_SIZE = 48  # 0.130 * 48 = 6.24
   # PERCORE_BATCH_SIZE = 52  # oom 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashQKVMp1(PileMUDDLlamaMediumPlus):  # XD
+  SQUASH_DYN_DENSE_W = 'qkvm'
+  SQUASH_SCALE_INIT = 0.1
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp1(PileMUDDLlamaMediumPlus):  # XD
+  SQUASH_DYN_DENSE_W = 'm'
+  SQUASH_SCALE_INIT = 0.1
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashQKVMp01(PileMUDDLlamaMediumPlus):  # XD
+  SQUASH_DYN_DENSE_W = 'qkvm'
+  SQUASH_SCALE_INIT = 0.01
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp01(PileMUDDLlamaMediumPlus):  # XD
+  SQUASH_DYN_DENSE_W = 'm'
+  SQUASH_SCALE_INIT = 0.01
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp1ScaleByLayer(PileMUDDLlamaMediumPlusSquashMp1):  # XD
+  SQUASH_SCALE_BY_LAYER = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp1InitByLayer(PileMUDDLlamaMediumPlusSquashMp1):  # XD
+  SQUASH_SCALE_INIT_BY_LAYER = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp1ScaleAndInitByLayer(PileMUDDLlamaMediumPlusSquashMp1):  # XD
+  SQUASH_SCALE_BY_LAYER = True
+  SQUASH_SCALE_INIT_BY_LAYER = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashMp01ScaleByLayer(PileMUDDLlamaMediumPlusSquashMp01):  # XD
+  SQUASH_SCALE_BY_LAYER = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSquashQKVMp1ScaleByLayer(PileMUDDLlamaMediumPlusSquashQKVMp1):  # XD
+  SQUASH_SCALE_BY_LAYER = True
 
 @experiment_registry.register  # XD
 class PileMUDDLlamaMediumPlusPBS(PileMUDDLlamaMediumPlus):
