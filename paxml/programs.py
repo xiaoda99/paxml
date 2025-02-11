@@ -806,6 +806,12 @@ class BaseEvalProgram(Program):
         len(per_example_scores),
         len(flat_scoring_outputs),
     )
+    # mqy: calculate loss at every position
+    # logging.info(f'flat_scoring_outputs: {flat_scoring_outputs[0]}')
+    loss_per_token = np.array([ex[1]['scores'] for ex in flat_scoring_outputs]).mean(axis=0) 
+    # summary_tensors['loss_per_token'] = loss_per_token
+    flat_scoring_outputs.append(('loss_per_token', loss_per_token))
+    logging.info(f'loss_per_token: {loss_per_token.shape}, {loss_per_token.tolist()}')
 
     eval_scoring_metrics = None
     output_dir = (
@@ -841,6 +847,7 @@ class BaseEvalProgram(Program):
       logging.info(
           '  %s=%f (weight=%f)', key, weighted_average, sum_metric_weights
       )
+    metrics['loss_per_token'] = loss_per_token.tolist()
     summary_utils.write_summary_entry(
         self._eval_summary_writer, step, loss, metrics, summary_tensors
     )
@@ -904,6 +911,7 @@ class BaseEvalProgram(Program):
           for out in (loss, weighted_scalars, per_example_out, summary_tensors)
       )
       logging.info("Finished eval step %d for %s -> loss: %s", step_num, self._name, loss.item())
+      # logging.info(f"per_example_out shape: {per_example_out['scores'].shape} {per_example_out['scores'].tolist()[:5] }")
       losses += [loss]
       for k, v in summary_utils.flatten_summary_dict(summary_tensors):
         if k in summary_tensor_dict:
