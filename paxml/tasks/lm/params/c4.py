@@ -785,7 +785,7 @@ def configure_gpt3_task(
                 'head_act_activation_cls', 'head_act_stop_grad', 'use_head_act_bias', 'skip_head_act_bias_decay',
                 'dconv_only_v', 'dconv_activation_cls', 'dconv_v_activation_cls', 'window_size',
                 'relu2_bias', 'o_norm', 'o_groupnorm', 'qk_activation_cls','linear_attn', 'internal_enable_query_scale', 
-                'scale_v', 'save_v_out','dynamic_qk_proj', 'dynamic_qkv_rotate', 'v_out_rotate', 'compose_mode', 'compose_residual', 'compose_inner_norm',
+                'scale_v', 'save_v_out','dynamic_qk_proj', 'dynamic_qkv_rotate', 'v_out_rotate', 'compose_mode', 'compose_residual', 'compose_inner_norm', 'compose_o_conditioned_on',
                 'dynamic_position', 'dynamic_position_activation_cls', 'dynamic_position_bias', 'dynamic_position_scale',
                 'rotary_position_emb_base', 'dynamic_position_act_bias', 'dynamic_position_bias_learnable', 'dynamic_position_mlp'
                 ]:
@@ -5581,6 +5581,15 @@ class PileDCLlamaMediumDWDDNoQKNormComposeQKVOFix(PileDCLlamaMediumDWDDNoQKNorm)
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormComposeVO(PileDCLlamaMediumDWDDNoQKNorm):
   COMPOSE_MODE = 'vo' # v4 
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeVOOnMixedV(PileDCLlamaMediumDWDDNoQKNormComposeVO):  # XD
+  # COMPOSE_MODE = 'lp'
+  COMPOSE_O_CONDITIONED_ON = 'mixedv'
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormComposeVOOnPlusMixedV(PileDCLlamaMediumDWDDNoQKNormComposeVO):  # XD
+  COMPOSE_O_CONDITIONED_ON = 'query_vec+mixedv'
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormComposeQKVOHighDWInit(PileDCLlamaMediumDWDDNoQKNormComposeQKVO):
