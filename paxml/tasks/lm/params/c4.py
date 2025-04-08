@@ -685,6 +685,20 @@ def configure_gpt3_task(
   else:
     model_p.lm_tpl.softmax_tpl.scale_sqrt_depth = getattr(cls, 'SCALE_EMBEDDING', False)  # XD: False
     model_p.lm_tpl.softmax_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
+
+  model_p.lm_tpl.dynamic_temp = getattr(cls, 'DYNAMIC_TEMP', False)
+  model_p.lm_tpl.dynamic_temp_slow = getattr(cls, 'DYNAMIC_TEMP_SLOW', False)
+  model_p.lm_tpl.dynamic_temp_hidden_dim = getattr(cls, 'DYNAMIC_TEMP_HIDDEN_DIM', 128)
+  model_p.lm_tpl.dynamic_temp_scale_dw = getattr(cls, 'DYNAMIC_TEMP_SCALE_DW', False)
+  model_p.lm_tpl.dynamic_temp_skip_dw = getattr(cls, 'DYNAMIC_TEMP_SKIP_DW', False)
+  model_p.lm_tpl.dynamic_temp_tanh = getattr(cls, 'DYNAMIC_TEMP_TANH', False)
+  model_p.lm_tpl.dynamic_temp_postnorm = getattr(cls, 'DYNAMIC_TEMP_POSTNORM', False)
+  model_p.lm_tpl.dynamic_temp_postnorm_scale = getattr(cls, 'DYNAMIC_TEMP_POSTNORM_SCALE', 0.001)
+  model_p.lm_tpl.dynamic_temp_postnorm_eps = getattr(cls, 'DYNAMIC_TEMP_POSTNORM_EPS', 1e-6)
+  model_p.lm_tpl.dynamic_temp_postnorm_scale_slow = getattr(cls, 'DYNAMIC_TEMP_POSTNORM_SCALE_SLOW', 0.1)
+  model_p.lm_tpl.dynamic_temp_prenorm = getattr(cls, 'DYNAMIC_TEMP_PRENORM', False)
+
+
   if cls.TRAINABLE_POSITION_EMB:
     model_p.lm_tpl.position_emb_tpl.lookup_style = cls.EMBEDDING_LOOKUP_STYLE
 
@@ -708,12 +722,12 @@ def configure_gpt3_task(
     for name in ['share_interval', 'share_attn_only', 'remat', 'share_mode', 'share_qknorm', 'share_qkov',
                  'share_dynamic_proj','share_interval_idxs', 'share_except_layers', 'use_slope_rate', 'lrpe_layers', 'slope_rate_lidxs',
                  'hyper_conn', 'hyper_conn_n', 'hyper_conn_tanh', 'hyper_conn_merge_wcdc', 'hyper_conn_attn', 'hyper_conn_efficient',
-                 'dense_conn', 'dense_conn_on_attn', 'dense_conn_on_attn_pre_norm', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dense_vector_scale', 'dense_vector_scale_keywise', 'dynamic_dense_share_qk_way',
-                 'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
+                 'layernorm_scaling', 'dense_conn', 'dense_conn_feat_wise', 'dense_conn_on_attn', 'dense_conn_on_attn_pre_norm', 'dense_conn_on_layerdiff', 'dense_conn_learnable', 'dynamic_dense', 'num_ffn', 'dynamic_dense_ft_norm', 'dense_finetune_scale', 'dense_vector_scale', 'dense_vector_scale_keywise', 'dynamic_dense_share_qk_way',
+                 'dynamic_dense_seperate_gating_ln', 'dynamic_dense_type', 'dynamic_dense_stack', 'dynamic_dense_num_heads', 'dynamic_dense_module_group','dynamic_dense_sep_qkv_ln', 'dynamic_dense_num_groups', 'dynamic_dense_ov', 'dynamic_dense_ov_init', 'dynamic_dense_ov_outer_loop', 'dynamic_dense_ov_rank',
                 'dynamic_dense_ov_gate', 'dynamic_dense_ov_after_merge', 'dynamic_dense_normalized', 'dynamic_dense_hidden_round', 'dynamic_dense_hidden_expand', 'use_recurrent_layer_mixing', 'dynamic_dense_disentangle',
                 'dynamic_dense_query_wise', 'dynamic_dense_key_wise', 'dynamic_dense_multilayer', 'dynamic_dense_gate_mlp', 'dynamic_dense_norm_on_weight', 'dynamic_dense_glu_mlp', 'dynamic_dense_add_residual', 'dynamic_dense_prenormed_residual_qkv',
                 'dynamic_dense_act_cls', 'dynamic_dense_fix_last_layer', 'dynamic_dense_k_from_res', 'dynamic_dense_q_from_res', 'dynamic_dense_v_from_res', 'dynamic_dense_keep_residual', 'dynamic_dense_by_group_heads', 'dynamic_dense_param_residual', 'dense_key_dilation', 'dense_query_dilation', 'dense_key_window', 'dense_key_window_with_layer1',
-                'use_dense_norm', 'use_dense_pre_norm', 'use_dense_post_norm', 'dense_post_norm_all', 'dense_post_norm_scale', 'dynamic_dense_w2_init', 'dynamic_dense_scale_dw', 'dynamic_dense_scale_dw_squared', 'dynamic_dense_q_norm', 'dynamic_dense_hyper_tanh', 'dynamic_dense_hyper_tanh_res',
+                'use_dense_norm', 'use_dense_pre_norm', 'use_dense_post_norm', 'dense_post_norm_all', 'dense_norm_scale', 'dense_post_norm_scale', 'dynamic_dense_w2_init', 'dynamic_dense_scale_dw', 'dynamic_dense_scale_dw_squared', 'dynamic_dense_q_norm', 'dynamic_dense_hyper_tanh', 'dynamic_dense_hyper_tanh_res',
                 'comp_dense_diff', 'dense_bias_init_method', 'laurel_lr', 'laurel_rw', 'laurel_normed_residual',
                 'dynamic_head_dense', 'dynamic_head_rank', 'dynamic_head_dense_type', 'dynamic_head_seperate_param', 'head_dw1_norm_on_activation', 'v_out_rank', 'v_out_dynamic', 'attn_out_orig',
                 'mamba_lidxs', 'use_mamba', 'mamba_use_minimal']: # mqy
@@ -743,6 +757,22 @@ def configure_gpt3_task(
       transformer_layer_p.dense_norm_tpl = pax_fiddle.Config(cls.DENSE_NORMALIZATION_CLS) #mqy
       if getattr(cls, 'DENSE_NORMALIZATION_CLS', None) == normalizations.RmsNorm:
         transformer_layer_p.dense_norm_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+        if getattr(cls, 'RMSNORM_FP32', False):
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = jnp.float32
+        elif getattr(cls, 'RMSNORM_BFP16', False):
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = jnp.bfloat16
+        else:
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = None
+      elif getattr(cls, 'DENSE_NORMALIZATION_CLS', None) == normalizations.RmsNormNoScale:
+        if getattr(cls, 'RMSNORM_FP32', False):
+          transformer_layer_p.dense_norm_tpl.cast_input = True
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = jnp.float32
+        elif getattr(cls, 'RMSNORM_BFP16', False):
+          transformer_layer_p.dense_norm_tpl.cast_input = True
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = jnp.bfloat16
+        else: 
+          transformer_layer_p.dense_norm_tpl.cast_input = False
+          transformer_layer_p.dense_norm_tpl.intermediate_dtype = jnp.float32
     transformer_layer_p.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     transformer_layer_p.tr_fflayer_tpl.ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
     model_p.lm_tpl.final_ln_tpl = pax_fiddle.Config(cls.NORMALIZATION_CLS)  # XD add
@@ -750,6 +780,15 @@ def configure_gpt3_task(
       transformer_layer_p.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
       transformer_layer_p.tr_fflayer_tpl.ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
       model_p.lm_tpl.final_ln_tpl.skip_weight_decay = cls.SKIP_RMSNORM_WD
+      if getattr(cls, 'RMSNORM_FP32', False):
+        intermediate_dtype = jnp.float32
+      elif getattr(cls, 'RMSNORM_BFP16', False):
+        intermediate_dtype = jnp.bfloat16
+      else:
+        intermediate_dtype = cls.FPROP_DTYPE
+      transformer_layer_p.ln_tpl.intermediate_dtype = intermediate_dtype
+      transformer_layer_p.tr_fflayer_tpl.ln_tpl.intermediate_dtype = intermediate_dtype
+      model_p.lm_tpl.final_ln_tpl.intermediate_dtype = intermediate_dtype
     if cls.NORMALIZATION_CLS == normalizations.LayerNorm:  # XD
       transformer_layer_p.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
       transformer_layer_p.tr_fflayer_tpl.ln_tpl.epsilon = cls.LAYERNORM_EPSILON
@@ -3484,6 +3523,11 @@ class PileLlamaXL(PileDataParams, _XLConfig, C4SpmdLlamaXL):
   NUM_LAYERS = 24 # v3 0.345, v4 0.396
 
 @experiment_registry.register
+class PileLlamaXLSpeedTest(PileLlamaXL):
+  QUERY_CHUNK_SIZE = None #v5p: 
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
 class PileLlamaXLHigh(PileLlamaXL):
   NUM_LAYERS = 42
   MODEL_DIMS = 1536
@@ -3512,6 +3556,11 @@ class PileLlamaXLHyperConnAttnTanh(PileLlamaXLHyperConnAttn):
   HYPER_CONN_TANH = True
 
 @experiment_registry.register
+class PileLlamaXLHyperConnAttnTanhSpeedTest(PileLlamaXLHyperConnAttnTanh):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
 class PileLlamaXLDebug(PileLlamaXL):
   CHECKPOINT_EVERY_N_STEPS = 500
   TENSORSTORE_USE_OCDBT = True
@@ -3533,6 +3582,11 @@ class PileMUDDLlamaXLPlus(MultiWayDynamicDenseConfig, PileLlamaXL):
   DYNAMIC_DENSE_HIDDEN_ROUND = True
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
   HIDDEN_DIMS = [round(5504 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaXLPlusSpeedTest(PileMUDDLlamaXLPlus):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class PileMUDDLlamaXLPlusTall(PileMUDDLlamaXLPlus):
@@ -3649,6 +3703,11 @@ class PileLlamaXLDense1x1(PileLlamaXL):
   DENSE_CONN = True
   REMAT = True
   USE_REPEATED_LAYER = False
+
+@experiment_registry.register
+class PileLlamaXLDense1x1SpeedTest(PileLlamaXLDense1x1):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class PileLlamaXLDynamicDense(PileLlamaXL): # mqy
@@ -3889,6 +3948,11 @@ class PileLlamaLarge(PileDataParams, _LargeConfig, C4SpmdLlamaLarge):
   pass  # v3  # v3 0.293
 
 @experiment_registry.register
+class PileLlamaLargeSpeedTest(PileLlamaLarge):
+  QUERY_CHUNK_SIZE = None # v5p: 0.404
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
 class PileLlamaLargeHigh(PileLlamaLarge):
   NUM_LAYERS = 34
   MODEL_DIMS = 1280
@@ -3922,8 +3986,17 @@ class PileMUDDLlamaLargePlus(MultiWayDynamicDenseConfig, PileLlamaLarge):
   HIDDEN_DIMS = [round(4096 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
 
 @experiment_registry.register
+class PileMUDDLlamaLargePlusSpeedTest(PileMUDDLlamaLargePlus):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
 class PileMUDDLlamaLargePlusScaleDw(PileMUDDLlamaLargePlus):
   DYNAMIC_DENSE_SCALE_DW = True
+
+@experiment_registry.register
+class PileMUDDLlamaLargePlusScaleDwAligned(PileMUDDLlamaLargePlusScaleDw):
+  pass 
 
 @experiment_registry.register
 class PileMUDDLlamaLargePlusHigh(PileMUDDLlamaLargePlus):
@@ -3954,6 +4027,11 @@ class PileLlamaLargeDenseFormer(PileLlamaLarge):
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaLargeDenseFormerSpeedTest(PileLlamaLargeDenseFormer):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
 class PileLlamaLargeHyperConnAttnTanh(LiteLog, PileLlamaLarge):
   REMAT = True
   USE_REPEATED_LAYER = False
@@ -3963,6 +4041,11 @@ class PileLlamaLargeHyperConnAttnTanh(LiteLog, PileLlamaLarge):
   HYPER_CONN_ATTN = True
   HYPER_CONN_EFFICIENT = True
   HYPER_CONN_TANH = True
+
+@experiment_registry.register
+class PileLlamaLargeHyperConnAttnTanhSpeedTest(PileLlamaLargeHyperConnAttnTanh):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class PileDCLlamaLarge(PileDataParams, _DCConfig, _LargeConfig, C4SpmdLlamaLarge, C4SpmdLlamaXLResTHDynWFFN8HD64DW1RmsNormWhole):
@@ -4009,6 +4092,104 @@ class PileLlamaMedium(PileDataParams, _MediumConfig, C4SpmdLlamaMedium):
   ZERO_LOSS = False
   # pass  # v3 0.520
   # TODO: _stepsx4 run should restart @42000
+
+@experiment_registry.register
+class PileLlamaMediumSpeedTest(PileLlamaMedium):
+  QUERY_CHUNK_SIZE = None #v5p: 0.658
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTemp(PileLlamaMedium):
+  DYNAMIC_TEMP = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPostNorm(PileLlamaMedium):
+  DYNAMIC_TEMP = True
+  DYNAMIC_TEMP_POSTNORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNorm(PileLlamaMedium):
+  DYNAMIC_TEMP = True
+  DYNAMIC_TEMP_POSTNORM = True
+  DYNAMIC_TEMP_PRENORM = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPreNormTanh(PileLlamaMedium):
+  DYNAMIC_TEMP = True
+  DYNAMIC_TEMP_PRENORM = True
+  DYNAMIC_TEMP_TANH = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1(PileLlamaMediumDynamicTempPrePostNorm):
+  DYNAMIC_TEMP_POSTNORM_SCALE = 1 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale5ScaleDw(PileLlamaMediumDynamicTempPrePostNorm):
+  DYNAMIC_TEMP_POSTNORM_SCALE = 5 
+  DYNAMIC_TEMP_SCALE_DW = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale5ScaleDwEps0p01(PileLlamaMediumDynamicTempPrePostNormScale5ScaleDw):
+  DYNAMIC_TEMP_POSTNORM_EPS = 1e-2
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale5ScaleDwEps1(PileLlamaMediumDynamicTempPrePostNormScale5ScaleDw):
+  DYNAMIC_TEMP_POSTNORM_EPS = 1
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale5ScaleDwEps100(PileLlamaMediumDynamicTempPrePostNormScale5ScaleDw):
+  DYNAMIC_TEMP_POSTNORM_EPS = 100
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale2ScaleDwEps1(PileLlamaMediumDynamicTempPrePostNorm):
+  DYNAMIC_TEMP_POSTNORM_EPS = 1
+  DYNAMIC_TEMP_POSTNORM_SCALE = 2
+  DYNAMIC_TEMP_SCALE_DW = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1Skipdw(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_SKIP_DW = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1ScaleDw(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_SCALE_DW = True
+  
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1ScaleDwHid1024(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_SCALE_DW = True
+  DYNAMIC_TEMP_HIDDEN_DIM = 1024
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale5(PileLlamaMediumDynamicTempPrePostNorm):
+  DYNAMIC_TEMP_POSTNORM_SCALE = 5 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale10(PileLlamaMediumDynamicTempPrePostNorm):
+  DYNAMIC_TEMP_POSTNORM_SCALE = 10 
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1Hid512(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_HIDDEN_DIM = 512
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1Hid1024(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_HIDDEN_DIM = 1024
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1FastSlow(PileLlamaMediumDynamicTempPrePostNormScale1):
+  DYNAMIC_TEMP_SLOW = True
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1FastSlowScale0p001(PileLlamaMediumDynamicTempPrePostNormScale1FastSlow):
+  DYNAMIC_TEMP_POSTNORM_SCALE_SLOW = 0.001
+
+@experiment_registry.register
+class PileLlamaMediumDynamicTempPrePostNormScale1FastSlowScale0p01(PileLlamaMediumDynamicTempPrePostNormScale1FastSlow):
+  DYNAMIC_TEMP_POSTNORM_SCALE_SLOW = 0.01
+
+@experiment_registry.register
+class PileLlamaMediumRmsNormFp32(PileLlamaMedium):
+  RMSNORM_FP32 = True
 
 @experiment_registry.register
 class PileLlamaMediumDebug7(PileLlamaMedium):
@@ -4078,6 +4259,11 @@ class PileLlamaMediumHyperConnAttn(PileLlamaMediumHyperConn):
 class PileLlamaMediumHyperConnAttnTanh(PileLlamaMediumHyperConnAttn):
   HYPER_CONN_EFFICIENT = True
   HYPER_CONN_TANH = True
+
+@experiment_registry.register
+class PileLlamaMediumHyperConnAttnTanhSpeedTest(PileLlamaMediumHyperConnAttnTanh):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
 
 @experiment_registry.register
 class PileLlamaMediumHyperConnAttnFastDebug(PileLlamaMediumHyperConnAttn):
@@ -4434,6 +4620,29 @@ class PileLlamaMediumDense1x1(PileLlamaMedium): #mqy
   USE_REPEATED_LAYER = False
 
 @experiment_registry.register
+class PileLlamaMediumDense1x1SpeedTest(PileLlamaMediumDense1x1):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileLlamaMediumVarLog(PileLlamaMedium):
+  REMAT = True
+  USE_REPEATED_LAYER = False
+
+@experiment_registry.register
+class PileLlamaMediumVarLogLayernormScalingFix(PileLlamaMediumVarLog):
+  LAYERNORM_SCALING = True
+
+@experiment_registry.register
+class PileLlamaMediumDenseFeatWise(PileLlamaMediumDense1x1):
+  DENSE_CONN_FEAT_WISE = True
+
+@experiment_registry.register
+class PileLlamaMediumDenseFeatWiseComposeDiff(PileLlamaMediumDenseFeatWise):
+  COMP_DENSE_DIFF = True
+  CHECKPOINT_EVERY_N_STEPS = 1000
+
+@experiment_registry.register
 class PileLlamaMediumDense1x1Multiway(PileLlamaMediumDense1x1):
   DYNAMIC_DENSE_TYPE = 'qkvm'
   DYNAMIC_DENSE_SEP_QKV_LN = True
@@ -4637,6 +4846,48 @@ class PileMUDDPythia3BPlusOcdbt(PileMUDDPythia3BPlus):
   ASYNC_CHECKPOINT = True
 
 @experiment_registry.register
+class PileMUDDPythia3BPlusOcdbtSpeedTest(PileMUDDPythia3BPlusOcdbt):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+  TENSORSTORE_USE_OCDBT = False
+  ASYNC_CHECKPOINT = False
+
+@experiment_registry.register
+class PilePythiaXLSpeedTest(PilePythiaXL128x1FixRot):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PilePythia3BSpeedTest(PilePythiaXLSpeedTest):
+  NUM_LAYERS = 32
+  MODEL_DIMS = 2560
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 80
+  HIDDEN_DIMS = 10240
+  PERCORE_BATCH_SIZE = 4 
+  ICI_MESH_SHAPE = [1, 256, 1] 
+
+@experiment_registry.register
+class PilePythia7BSpeedTest(PilePythiaXLSpeedTest):
+  HIDDEN_DIMS = 16384
+  NUM_LAYERS = 32
+  MODEL_DIMS = 4096
+  NUM_HEADS = 32
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 4 
+  ICI_MESH_SHAPE = [1, 256, 1] 
+
+@experiment_registry.register
+class PilePythia12BSpeedTest(PilePythiaXLSpeedTest):
+  HIDDEN_DIMS = 20480
+  NUM_LAYERS = 36
+  MODEL_DIMS = 5120
+  NUM_HEADS = 40
+  DIMS_PER_HEAD = 128
+  PERCORE_BATCH_SIZE = 4 
+  ICI_MESH_SHAPE = [1, 256, 1] 
+
+@experiment_registry.register
 class PileMUDDPythiaXLPlusOcdbt(MultiWayDynamicDenseConfig, PilePythiaXL128x1FixRot):
   DYNAMIC_DENSE_HIDDEN_ROUND = True
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4] 
@@ -4649,6 +4900,13 @@ class PileMUDDPythiaXLPlusOcdbt(MultiWayDynamicDenseConfig, PilePythiaXL128x1Fix
   CHECKPOINT_EVERY_N_STEPS = 500
   TENSORSTORE_USE_OCDBT = True
   ASYNC_CHECKPOINT = True
+
+@experiment_registry.register
+class PileMUDDPythiaXLPlusOcdbtSpeedTest(PileMUDDPythiaXLPlusOcdbt):
+  QUERY_CHUNK_SIZE = None
+  LM_HEAD_CHUNK_SIZE = None
+  TENSORSTORE_USE_OCDBT = False
+  ASYNC_CHECKPOINT = False
 
 @experiment_registry.register
 class PileMUDDLlama3B(MultiWayDynamicDenseConfig, PileDataParams, PythiaInit, _Llama3B):
@@ -4748,6 +5006,71 @@ class PileMUDDLlamaMediumPlus(PileMUDDLlamaMedium):
   DYNAMIC_DENSE_HIDDEN_ROUND = True
   DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 23 + [4]
   HIDDEN_DIMS = [round(2816 * (i/23 +0.5) / 128) * 128 for i in range(24)] 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusShort(PileMUDDLlamaMediumPlus):
+  NUM_LAYERS = 19 # v5p: 
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 18 + [4]
+  HIDDEN_DIMS = [round(2816 * (i/18 +0.5) / 128) * 128 for i in range(19)]
+
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusWide(PileMUDDLlamaMediumPlus):
+  NUM_LAYERS = 12 # v5p:0.926 
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 11 + [4]
+  HIDDEN_DIMS = [round(6912 * (i/11 +0.5) / 128) * 128 for i in range(12)]
+  # QUERY_CHUNK_SIZE = None 
+  # LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusKD2QD2SpeedTest(PileMUDDLlamaMediumPlus):
+  DENSE_KEY_DILATION = 2 
+  DENSE_QUERY_DILATION = 2
+  QUERY_CHUNK_SIZE = None # v5p: 0.594
+  LM_HEAD_CHUNK_SIZE = None
+
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusSpeedTest(PileMUDDLlamaMediumPlus):
+  QUERY_CHUNK_SIZE = None # v5p 0.536 -> 0.658
+  LM_HEAD_CHUNK_SIZE = None
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusShortSpeedTest(PileMUDDLlamaMediumPlusSpeedTest):
+  # NUM_LAYERS = 19 # v5p: 0.687
+  # DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 18 + [4]
+  # HIDDEN_DIMS = [round(2816 * (i/18 +0.5) / 128) * 128 for i in range(19)] 
+  NUM_LAYERS = 20 # v5p: 0.649
+  DYNAMIC_DENSE_HIDDEN_EXPAND = [1] * 19 + [4]
+  HIDDEN_DIMS = [round(2816 * (i/19 +0.5) / 128) * 128 for i in range(20)]
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusVarLog(PileMUDDLlamaMediumPlus):
+  VARIABLE_NORM_SUMMARY = True 
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusVarLogLayernormScalingFix(PileMUDDLlamaMediumPlusVarLog):
+  LAYERNORM_SCALING = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusRmsNormFp32(PileMUDDLlamaMediumPlus):
+  RMSNORM_FP32 = True
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusRmsNormFp32NormScale0p9(PileMUDDLlamaMediumPlus):
+  RMSNORM_FP32 = True
+  DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
+  DENSE_NORM_SCALE = 0.9
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusRmsNormFp32NormScale0p1(PileMUDDLlamaMediumPlusRmsNormFp32NormScale0p9):
+  DENSE_NORM_SCALE = 0.1
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusRmsNormFp32NormScale0p001(PileMUDDLlamaMediumPlus):
+  RMSNORM_FP32 = True
+  DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
+  DENSE_NORM_SCALE = 0.001
 
 @experiment_registry.register
 class PileMUDDLlamaMediumPlusQVM(PileMUDDLlamaMediumPlus):
@@ -4855,6 +5178,10 @@ class PileMUDDLlamaMediumPlusScaleDw(PileMUDDLlamaMediumPlus):
   DYNAMIC_DENSE_SCALE_DW = True
 
 @experiment_registry.register
+class PileMUDDLlamaMediumPlusScaleDwDebug(PileMUDDLlamaMediumPlusScaleDw):
+  pass
+
+@experiment_registry.register
 class PileMUDDLlamaMediumPlusScaleDwSquared(PileMUDDLlamaMediumPlusScaleDw):
   DYNAMIC_DENSE_SCALE_DW_SQUARED = True
 
@@ -4899,6 +5226,30 @@ class PileMUDDLlamaMediumPlusPrePostNorm(PileMUDDLlamaMediumPlus):
   DENSE_NORMALIZATION_CLS = normalizations.RmsNorm
   USE_DENSE_POST_NORM = True
   DENSE_POST_NORM_SCALE = 0.001
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormDHead8(PileMUDDLlamaMediumPlusPrePostNorm):
+  DYNAMIC_DENSE_NUM_HEADS = 8
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormModGroup2(PileMUDDLlamaMediumPlusPrePostNorm):
+  DYNAMIC_DENSE_MODULE_GROUP = 2
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormModGroup4(PileMUDDLlamaMediumPlusPrePostNorm):
+  DYNAMIC_DENSE_MODULE_GROUP = 4
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormScale1(PileMUDDLlamaMediumPlusPrePostNorm):
+  DENSE_POST_NORM_SCALE = 1
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormScale0p1(PileMUDDLlamaMediumPlusPrePostNorm):
+  DENSE_POST_NORM_SCALE = 0.1
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusPrePostNormScale0p01(PileMUDDLlamaMediumPlusPrePostNorm):
+  DENSE_POST_NORM_SCALE = 0.01
 
 @experiment_registry.register
 class PileMUDDLlamaMediumPlusPrePostNormConnAttn(PileMUDDLlamaMediumPlusPrePostNorm):
@@ -8029,6 +8380,14 @@ class PileMUDDLlamaSmallPlusPileEval(PileEval, PileMUDDLlamaSmallPlus): # muddll
 @experiment_registry.register
 class PileMUDDLlamaMediumPlusPileEval(PileEval, PileMUDDLlamaMediumPlus):
   TASK_NAME='PileMUDDLlamaMediumPlusPileEval' 
+  EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
+  RESET_FOR_EVAL = False
+  ICI_MESH_SHAPE = [1, 32, 1]
+  PERCORE_BATCH_SIZE = 32
+
+@experiment_registry.register
+class PileMUDDLlamaMediumPlusShortPileEval(PileEval, PileMUDDLlamaMediumPlusShort):
+  TASK_NAME='PileMUDDLlamaMediumPlusShortPileEval' 
   EVAL_LOOP_NUM_BATCHES = 162 # loss 'num_predictions': '2097152.0', 'total_loss': ''
   RESET_FOR_EVAL = False
   ICI_MESH_SHAPE = [1, 32, 1]
