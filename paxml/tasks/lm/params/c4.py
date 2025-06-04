@@ -795,7 +795,8 @@ def configure_gpt3_task(
       if hasattr(cls, NAME) and (not NAME.startswith('WINDOW_SIZE') or getattr(cls, 'QUERY_CHUNK_SIZE', None) is not None):
         setattr(transformer_layer_p.tr_atten_tpl, name, getattr(cls, NAME))
 
-    dynamic_w_attrs = ['dynamic_w_init', 'dynamic_w2_init', 'dynamic_d_init', 
+    dynamic_w_attrs = ['dynamic_w_init', 'dynamic_w2_init', 'dynamic_d_init',
+        'share_lp_dw_hidden', 'share_prepost_dw_hidden', 'share_all_dw_hidden',  # XD
         'dw_activation_cls', 'dw_activation_weights', 'dynamic_squeeze_ratio',
         'dw_cap', 'learned_dw_cap', 'use_dw_cap_bias', 'decompose_dynamic_w',
         'dynamic_w_hidden_dim', 'dynamic_d_hidden_dim', 'dw_hidden_activation_cls',
@@ -3551,8 +3552,13 @@ class PileDCLlamaXLHead16x128GQA4(PileDCLlamaXLHead16x128):
   HIDDEN_DIMS = 6528
 
 @experiment_registry.register
+class PileLlamaXLGQA8(PileLlamaXL):
+  NUM_KV_HEADS = 8  # v5p 0.585
+  HIDDEN_DIMS = 6528
+
+@experiment_registry.register
 class PileDCLlamaXLGQA8(PileDCLlamaXLFixDWShape):
-  NUM_KV_HEADS = 8  # v3 0.191
+  NUM_KV_HEADS = 8  # v3 0.191, v5p 0.308 << PileLlamaXLGQA8!!
   HIDDEN_DIMS = 6528
 
 @experiment_registry.register
@@ -3561,6 +3567,31 @@ class PileDCLlamaXLGQA8NG4DiffKV(PileDCLlamaXLGQA8):
   DYNAMIC_SQUEEZE_RATIO = 8
   DYNAMIC_W_HIDDEN_DIM = 16
   
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG8SameKV(PileDCLlamaXLGQA8NG4DiffKV):
+  NUM_GROUPS = 8  # v5p 0.227 << PileLlamaXLGQA8!
+  INTERLEAVE_KV_HEADS = False
+  DYNAMIC_SQUEEZE_RATIO = 4
+  DYNAMIC_W_HIDDEN_DIM = 8
+ 
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG4SameKV(PileDCLlamaXLGQA8NG4DiffKV):
+  NUM_GROUPS = 4  # v5p 0.313 << PileLlamaXLGQA8!
+  INTERLEAVE_KV_HEADS = False
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG4SameKVR2(PileDCLlamaXLGQA8NG4SameKV):
+  DYNAMIC_SQUEEZE_RATIO = 4  # v5p 0.251 << PileLlamaXLGQA8!
+  DYNAMIC_W_HIDDEN_DIM = 32
+
+@experiment_registry.register
+class PileDCLlamaXLGQA8NG2SameKV(PileDCLlamaXLGQA8NG4SameKV):
+  NUM_GROUPS = 2  # v5p 0.342
+  DYNAMIC_SQUEEZE_RATIO = 16
+  DYNAMIC_W_HIDDEN_DIM = 32
+
 @experiment_registry.register
 class PileDCLlamaXLGQA4NG4SameKV(PileDCLlamaXLGQA8NG4DiffKV):
   NUM_KV_HEADS = 4  # v3 0.194
@@ -3607,6 +3638,28 @@ class PileDCLlamaXLNoQKNorm(PileDCLlamaXLFixDWShape):
 @experiment_registry.register
 class PileDCLlamaXLDWDDNoQKNorm(PileDCLlamaXLDWDD):
   QK_NORM = False  # v4 0.284
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormShareLPDWHid(PileDCLlamaXLDWDD):  # XD
+  SHARE_LP_DW_HIDDEN = True  # v5p
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormSharePrePostDWHidFix(PileDCLlamaXLDWDD):  # XD
+  SHARE_PREPOST_DW_HIDDEN = True  # v5p
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormShareAllDWHid(PileDCLlamaXLDWDD):  # XD
+  SHARE_ALL_DW_HIDDEN = True  # v5p
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormONorm(PileDCLlamaXLDWDD):  # XD
+  O_NORM = True  # v5p
+  O_GROUPNORM = False
+
+@experiment_registry.register
+class PileDCLlamaXLDWDDNoQKNormOGroupNorm(PileDCLlamaXLDWDD):  # XD
+  O_NORM = True  # v5p
+  O_GROUPNORM = True
 
 @experiment_registry.register
 class PileDCLlamaXLDWDDNoQKNormA4M4L36(PileDCLlamaXLDWDDNoQKNorm): #mqy
@@ -5565,6 +5618,42 @@ class PileDCLlamaMediumDWDDNoQKNormMQA(PileDCLlamaMediumDWDDNoQKNorm):
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormMQAComposeQO(PileDCLlamaMediumDWDDNoQKNormMQA):
   COMPOSE_MODE = 'qo' # v4: 0.3736
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormGQA4(PileDCLlamaMediumDWDDNoQKNorm):
+  NUM_KV_HEADS = 4  # v5p 0.456
+  HIDDEN_DIMS = 3328 # (4 + 8 - 2.5) / 3 * 1024 = 3242
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormGQA4NG2SameKV(PileDCLlamaMediumDWDDNoQKNormGQA4):
+  NUM_GROUPS = 2  # v5p 0.504
+  INTERLEAVE_KV_HEADS = False
+  DYNAMIC_SQUEEZE_RATIO = 8
+  DYNAMIC_W_HIDDEN_DIM = 16
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormGQA4NG2SameKVR2(PileDCLlamaMediumDWDDNoQKNormGQA4NG2SameKV):
+  DYNAMIC_SQUEEZE_RATIO = 4  # v5p 0.388
+  DYNAMIC_W_HIDDEN_DIM = 32
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQAComposeQOHeadx2(PileDCLlamaMediumDWDDNoQKNormMQAComposeQO):
+  NUM_HEADS = 16 * 2
+  DYNAMIC_SQUEEZE_RATIO = 8 * 2
+  DYNAMIC_W_HIDDEN_DIM = 64 * 2
+  ICI_MESH_SHAPE = [1, 32 * 2, 1]  # on v5p-32 instead of v5p-16 0.609
+  PERCORE_BATCH_SIZE = 8 // 2
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQAComposeQOHeadx2Rx2(PileDCLlamaMediumDWDDNoQKNormMQAComposeQOHeadx2):
+  DYNAMIC_SQUEEZE_RATIO = 8  # v5p-32 0.599
+  DYNAMIC_W_HIDDEN_DIM = 64 * 4
+
+@experiment_registry.register
+class PileDCLlamaMediumDWDDNoQKNormMQAComposeQOHeadx4Rx2(PileDCLlamaMediumDWDDNoQKNormMQAComposeQOHeadx2):
+  NUM_HEADS = 16 * 4
+  DYNAMIC_SQUEEZE_RATIO = 8 * 2  # v5p-32 0.340
+  DYNAMIC_W_HIDDEN_DIM = 64 * 4
 
 @experiment_registry.register
 class PileDCLlamaMediumDWDDNoQKNormMQATgt(PileDCLlamaMediumDWDDNoQKNormMQA):
